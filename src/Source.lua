@@ -50,9 +50,20 @@ local function exportModuleLocals(source)
     for line in (source .. "\n"):gmatch("(.-)\n") do
         if line:sub(1, 15) == "local function " then
             line = "function " .. line:sub(16)
-        elseif line:match("^local%s+[%a_][%w_]*%s*[,=]")
-            or line:match("^local%s+[%a_][%w_]*%s*$") then
-            line = line:gsub("^local%s+", "", 1)
+        elseif line:sub(1, 6) == "local " then
+            local declaration = line:sub(7)
+
+            -- Only export declarations that actually begin at column zero.
+            -- Locals inside normal function bodies remain indented and therefore local.
+            if declaration:match("^[%a_][%w_]*") then
+                if declaration:find("=", 1, true) then
+                    line = declaration
+                else
+                    -- `local PathFolder` / `local A, B` would become an invalid
+                    -- bare expression if we only removed the `local` keyword.
+                    line = declaration .. " = nil"
+                end
+            end
         end
 
         index += 1
