@@ -97,12 +97,15 @@ function CompileLegacySection(moduleName, startMarker, endMarker)
     local source = findSection(getLegacySource(), startMarker, endMarker)
     source = exportModuleLocals(source)
 
-    local chunk, compileError = loadstring(source, "@Experiment17_Rivals/" .. tostring(moduleName))
+    local chunk, compileError = loadstring(source)
     if not chunk then
         error(("Experiment17_Rivals: compile error in %s: %s"):format(tostring(moduleName), tostring(compileError)))
     end
 
-    setfenv(chunk, getfenv(1))
+    if type(setfenv) == "function" and type(getfenv) == "function" then
+        setfenv(chunk, getfenv(1))
+    end
+
     local ok, runtimeError = pcall(chunk)
     if not ok then
         error(("Experiment17_Rivals: runtime error in %s: %s"):format(tostring(moduleName), tostring(runtimeError)))
