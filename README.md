@@ -1,4 +1,3 @@
-\
 # Experiment17_Rivals
 
 Experiment 17 using `Experiment17_GuiLib` Legacy v22.
