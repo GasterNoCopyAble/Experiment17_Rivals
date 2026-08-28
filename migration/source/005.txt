@@ -1,0 +1,1022 @@
+local function ReadRoundTimerValue(object)
+    if not object then
+        return nil, nil
+    end
+
+    if object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox") then
+        return tostring(object.Text), "Text"
+    end
+
+    if object:IsA("StringValue")
+        or object:IsA("IntValue")
+        or object:IsA("NumberValue") then
+
+        return tostring(object.Value), "Value"
+    end
+
+    local okText, textValue = pcall(function()
+        return object.Text
+    end)
+
+    if okText then
+        return tostring(textValue), "Text"
+    end
+
+    local okValue, value = pcall(function()
+        return object.Value
+    end)
+
+    if okValue then
+        return tostring(value), "Value"
+    end
+
+    return nil, nil
+end
+
+local function UpdateRoundHUD()
+    if not RoundStatusLabel then
+        return
+    end
+
+    if not Toggles.RoundMusic or not Toggles.RoundMusic.Value then
+        RoundStatusLabel.Text = "ROUND SYNC: OFF | manual / continuous"
+        return
+    end
+
+    if not RoundTimerObject then
+        RoundStatusLabel.Text = "ROUND SYNC: ON | timer not found"
+        return
+    end
+
+    RoundStatusLabel.Text =
+        RoundActive
+        and "ROUND SYNC: ACTIVE | playing"
+        or "ROUND SYNC: WAITING | paused"
+end
+
+local function SetRoundActive(active)
+    if RoundActive == active then
+        UpdateRoundHUD()
+        return
+    end
+
+    RoundActive = active
+    UpdateRoundHUD()
+
+    if not Toggles.RoundMusic or not Toggles.RoundMusic.Value then
+        return
+    end
+
+    if active then
+        if not Toggles.MusicEnabled.Value or #Playlist == 0 then
+            return
+        end
+
+        if CurrentTrack <= 0 then
+            PlayTrack(1)
+        elseif not MusicSound.IsPlaying then
+            local ok = pcall(function()
+                MusicSound:Resume()
+            end)
+
+            if not ok then
+                MusicSound:Play()
+            end
+        end
+    else
+        if MusicSound.IsPlaying then
+            MusicSound:Pause()
+        end
+    end
+end
+
+local function ResolveRoundTimer()
+    local playerGui = LP:FindFirstChild("PlayerGui")
+    if not playerGui then return nil end
+
+    local mainGui = playerGui:FindFirstChild("MainGui")
+    local mainFrame = mainGui and mainGui:FindFirstChild("MainFrame")
+    local duelInterfaces = mainFrame and mainFrame:FindFirstChild("DuelInterfaces")
+    local duelInterface = duelInterfaces and duelInterfaces:FindFirstChild("DuelInterface")
+    local top = duelInterface and duelInterface:FindFirstChild("Top")
+    local timer = top and top:FindFirstChild("Timer")
+    local numbers = timer and timer:FindFirstChild("Numbers")
+    local full = numbers and numbers:FindFirstChild("Full")
+
+    if not full then
+        return nil
+    end
+
+    -- Exact object from the user-provided path: Full.Value.
+    return full:FindFirstChild("Value") or full
+end
+
+local function AttachRoundTimer(object)
+    if RoundTimerConnection then
+        RoundTimerConnection:Disconnect()
+        RoundTimerConnection = nil
+    end
+
+    RoundTimerObject = object
+    RoundTimerProperty = nil
+    LastRoundTimerValue = nil
+    LastRoundTimerChange = 0
+    RoundActive = false
+
+    if not object then
+        UpdateRoundHUD()
+        return
+    end
+
+    local currentValue, property = ReadRoundTimerValue(object)
+
+    if not property then
+        RoundTimerObject = nil
+        UpdateRoundHUD()
+        return
+    end
+
+    RoundTimerProperty = property
+    LastRoundTimerValue = currentValue
+
+    local signal = object:GetPropertyChangedSignal(property)
+
+    RoundTimerConnection = signal:Connect(function()
+        local newValue = select(1, ReadRoundTimerValue(object))
+
+        if newValue == nil or newValue == LastRoundTimerValue then
+            return
+        end
+
+        LastRoundTimerValue = newValue
+        LastRoundTimerChange = os.clock()
+        SetRoundActive(true)
+    end)
+
+    UpdateRoundHUD()
+end
+
+local function EnsureRoundTimer()
+    local playerGui = LP:FindFirstChild("PlayerGui")
+
+    if RoundTimerObject
+        and RoundTimerObject.Parent
+        and playerGui
+        and RoundTimerObject:IsDescendantOf(playerGui) then
+
+        return
+    end
+
+    AttachRoundTimer(ResolveRoundTimer())
+end
+
+-- Low-frequency task instead of a Heartbeat player-tree search every frame.
+task.spawn(function()
+    while not Unloaded do
+        task.wait(0.20)
+
+        local now = os.clock()
+
+        if now - LastRoundResolve >= 2 then
+            LastRoundResolve = now
+            EnsureRoundTimer()
+        end
+
+        if RoundActive and LastRoundTimerChange > 0 then
+            local delay =
+                (Options.RoundStopDelay and Options.RoundStopDelay.Value)
+                or 2.25
+
+            if now - LastRoundTimerChange >= delay then
+                SetRoundActive(false)
+            end
+        end
+    end
+end)
+
+--========================================================
+-- COMBAT UI
+--========================================================
+
+local AimBox = Tabs.Combat:AddLeftGroupbox("Aimbot")
+
+AimBox:AddToggle(
+    "AimEnabled",
+    {
+        Text = "Aimbot",
+        Default = false
+    }
+):AddKeyPicker(
+    "AimKey",
+    {
+        Default = "Q",
+        Mode = "Toggle",
+        SyncToggleState = true,
+        Text = "Aimbot",
+        NoUI = false
+    }
+)
+
+AimBox:AddToggle(
+    "TargetLock",
+    {
+        Text = "Target Lock",
+        Default = true
+    }
+)
+
+AimBox:AddDropdown(
+    "AimPart",
+    {
+        Text = "Target Part",
+        Values = {
+            "Head",
+            "HumanoidRootPart",
+            "UpperTorso",
+            "Torso"
+        },
+        Default = 1,
+        Multi = false
+    }
+)
+
+AimBox:AddSlider(
+    "MaxAimDistance",
+    {
+        Text = "Max Aim Distance",
+        Default = 500,
+        Min = 25,
+        Max = 5000,
+        Rounding = 0,
+        Suffix = " studs"
+    }
+)
+
+local AimChecks = Tabs.Combat:AddRightGroupbox("Checks")
+
+AimChecks:AddToggle(
+    "TeamCheck",
+    {
+        Text = "Ignore Teammates",
+        Default = true
+    }
+)
+
+AimChecks:AddToggle(
+    "IgnoreFriends",
+    {
+        Text = "Ignore Friends",
+        Default = true
+    }
+)
+
+AimChecks:AddToggle(
+    "WallCheck",
+    {
+        Text = "Wall Check",
+        Default = true
+    }
+)
+
+AimChecks:AddToggle(
+    "UseFOV",
+    {
+        Text = "Use FOV",
+        Default = true
+    }
+)
+
+AimChecks:AddToggle(
+    "ShowFOV",
+    {
+        Text = "Show FOV",
+        Default = false
+    }
+)
+
+AimChecks:AddSlider(
+    "AimFOV",
+    {
+        Text = "FOV",
+        Default = 300,
+        Min = 20,
+        Max = 1500,
+        Rounding = 0
+    }
+)
+
+local DodgeBox = Tabs.Combat:AddRightGroupbox("Gaze Dodge")
+
+DodgeBox:AddToggle(
+    "GazeDodge",
+    {
+        Text = "Dodge Enemy Gaze",
+        Default = false
+    }
+)
+
+DodgeBox:AddSlider(
+    "GazeDistance",
+    {
+        Text = "Max Distance",
+        Default = 800,
+        Min = 50,
+        Max = 1500,
+        Rounding = 0,
+        Suffix = " studs"
+    }
+)
+
+DodgeBox:AddSlider(
+    "GazeAngle",
+    {
+        Text = "Detection Angle",
+        Default = 7,
+        Min = 1,
+        Max = 30,
+        Rounding = 0,
+        Suffix = " deg"
+    }
+)
+
+DodgeBox:AddSlider(
+    "DodgeDistance",
+    {
+        Text = "Side Dodge",
+        Default = 4,
+        Min = 1,
+        Max = 20,
+        Rounding = 1,
+        Suffix = " studs"
+    }
+)
+
+DodgeBox:AddSlider(
+    "DodgeCooldown",
+    {
+        Text = "Cooldown",
+        Default = 0.25,
+        Min = 0.05,
+        Max = 2,
+        Rounding = 2,
+        Suffix = " s"
+    }
+)
+
+--========================================================
+-- VISUALS UI
+--========================================================
+
+local ESPBox = Tabs.Visuals:AddLeftGroupbox("Expanded ESP")
+
+ESPBox:AddToggle(
+    "HighlightESP",
+    {
+        Text = "Highlight",
+        Default = false
+    }
+)
+
+ESPBox:AddToggle(
+    "BoxESP",
+    {
+        Text = "Boxes",
+        Default = false
+    }
+)
+
+ESPBox:AddToggle(
+    "TracerESP",
+    {
+        Text = "Tracers",
+        Default = false
+    }
+)
+
+ESPBox:AddToggle(
+    "ESPName",
+    {
+        Text = "Names",
+        Default = true
+    }
+)
+
+ESPBox:AddToggle(
+    "ESPHealth",
+    {
+        Text = "HP Text",
+        Default = true
+    }
+)
+
+ESPBox:AddToggle(
+    "ESPHealthBar",
+    {
+        Text = "HP Bar",
+        Default = true
+    }
+)
+
+ESPBox:AddToggle(
+    "ESPDistance",
+    {
+        Text = "Distance",
+        Default = true
+    }
+)
+
+ESPBox:AddToggle(
+    "TeamESP",
+    {
+        Text = "Team ESP",
+        Default = true
+    }
+)
+
+ESPBox:AddToggle(
+    "ESPFriendCheck",
+    {
+        Text = "Hide Friends",
+        Default = false
+    }
+)
+
+ESPBox:AddToggle(
+    "ESPVisibleOnly",
+    {
+        Text = "Visible Only",
+        Default = false
+    }
+)
+
+ESPBox:AddSlider(
+    "ESPMaxDistance",
+    {
+        Text = "ESP Max Distance",
+        Default = 2500,
+        Min = 50,
+        Max = 10000,
+        Rounding = 0,
+        Suffix = " studs"
+    }
+)
+
+ESPBox:AddSlider(
+    "ESPUpdateRate",
+    {
+        Text = "ESP Update Rate",
+        Default = 20,
+        Min = 5,
+        Max = 60,
+        Rounding = 0,
+        Suffix = " Hz"
+    }
+)
+
+ESPBox:AddLabel("Enemy Color"):AddColorPicker(
+    "EnemyColor",
+    {
+        Default = Color3.fromRGB(255, 70, 70)
+    }
+)
+
+ESPBox:AddLabel("Team Color"):AddColorPicker(
+    "TeamColor",
+    {
+        Default = Color3.fromRGB(80, 150, 255)
+    }
+)
+
+ESPBox:AddToggle(
+    "BoxFill",
+    {
+        Text = "Box Fill",
+        Default = false
+    }
+)
+
+ESPBox:AddSlider(
+    "FillTransparency",
+    {
+        Text = "Fill Transparency",
+        Default = 0.82,
+        Min = 0,
+        Max = 1,
+        Rounding = 2
+    }
+)
+
+ESPBox:AddSlider(
+    "BoxRoundness",
+    {
+        Text = "Roundness",
+        Default = 0,
+        Min = 0,
+        Max = 30,
+        Rounding = 0
+    }
+)
+
+ESPBox:AddSlider(
+    "BoxThickness",
+    {
+        Text = "Box Thickness",
+        Default = 2,
+        Min = 1,
+        Max = 5,
+        Rounding = 0
+    }
+)
+
+ESPBox:AddSlider(
+    "ESPTextSize",
+    {
+        Text = "Text Size",
+        Default = 14,
+        Min = 10,
+        Max = 22,
+        Rounding = 0
+    }
+)
+
+ESPBox:AddDropdown(
+    "TracerOrigin",
+    {
+        Text = "Tracer Origin",
+        Values = {
+            "Bottom",
+            "Center",
+            "Top"
+        },
+        Default = 1,
+        Multi = false
+    }
+)
+
+local ParticleBox = Tabs.Visuals:AddLeftGroupbox("Player Particles")
+
+ParticleBox:AddToggle(
+    "Particles",
+    {
+        Text = "Particles",
+        Default = false
+    }
+)
+
+ParticleBox:AddDropdown(
+    "ParticleType",
+    {
+        Text = "Type",
+        Values = {
+            "Sparkles",
+            "Smoke",
+            "Soft",
+            "Fireflies",
+            "Custom"
+        },
+        Default = 1,
+        Multi = false
+    }
+)
+
+ParticleBox:AddDropdown(
+    "ParticleRegion",
+    {
+        Text = "Sphere Region",
+        Values = {
+            "Surface",
+            "Volume"
+        },
+        Default = 1,
+        Multi = false
+    }
+)
+
+ParticleBox:AddSlider(
+    "ParticleRadius",
+    {
+        Text = "Sphere Radius",
+        Default = 4,
+        Min = 1,
+        Max = 15,
+        Rounding = 1
+    }
+)
+
+ParticleBox:AddSlider(
+    "ParticleAmount",
+    {
+        Text = "Amount",
+        Default = 40,
+        Min = 1,
+        Max = 500,
+        Rounding = 0
+    }
+)
+
+ParticleBox:AddLabel("Color"):AddColorPicker(
+    "ParticleColor",
+    {
+        Default = Color3.fromRGB(130, 170, 255)
+    }
+)
+
+ParticleBox:AddInput(
+    "ParticleTexture",
+    {
+        Text = "Custom Texture",
+        Default = "rbxasset://textures/particles/sparkles_main.dds",
+        Numeric = false,
+        Finished = true
+    }
+)
+
+ParticleBox:AddSlider(
+    "ParticleSize",
+    {
+        Text = "Size",
+        Default = 0.5,
+        Min = 0.05,
+        Max = 6,
+        Rounding = 2
+    }
+)
+
+ParticleBox:AddSlider(
+    "ParticleSpeed",
+    {
+        Text = "Speed",
+        Default = 4,
+        Min = 0,
+        Max = 50,
+        Rounding = 1
+    }
+)
+
+ParticleBox:AddSlider(
+    "ParticleLifetime",
+    {
+        Text = "Lifetime",
+        Default = 2,
+        Min = 0.1,
+        Max = 10,
+        Rounding = 1,
+        Suffix = " s"
+    }
+)
+
+local WorldBox = Tabs.Visuals:AddRightGroupbox("World")
+
+WorldBox:AddToggle(
+    "XRay",
+    {
+        Text = "X-Ray",
+        Default = false
+    }
+)
+
+WorldBox:AddSlider(
+    "XRayTransparency",
+    {
+        Text = "X-Ray Transparency",
+        Default = 0.7,
+        Min = 0.1,
+        Max = 0.95,
+        Rounding = 2
+    }
+)
+
+WorldBox:AddDropdown(
+    "GraphicsPreset",
+    {
+        Text = "Graphics Preset",
+        Values = {
+            "Default",
+            "Realistic",
+            "Horror",
+            "Surreal",
+            "Dream",
+            "Neon Night"
+        },
+        Default = 1,
+        Multi = false
+    }
+)
+
+WorldBox:AddToggle(
+    "FPSBoost",
+    {
+        Text = "FPS Boost",
+        Default = false
+    }
+)
+
+WorldBox:AddDropdown(
+    "FPSMode",
+    {
+        Text = "FPS Mode",
+        Values = {
+            "Light",
+            "Aggressive"
+        },
+        Default = 1,
+        Multi = false
+    }
+)
+
+--========================================================
+-- PLAYER UI
+--========================================================
+
+local MovementBox = Tabs.Player:AddLeftGroupbox("Movement")
+
+MovementBox:AddToggle(
+    "SpeedHack",
+    {
+        Text = "Walk Speed",
+        Default = false
+    }
+)
+
+MovementBox:AddSlider(
+    "WalkSpeed",
+    {
+        Text = "Walk Speed",
+        Default = 32,
+        Min = 16,
+        Max = 300,
+        Rounding = 0
+    }
+)
+
+MovementBox:AddToggle(
+    "JumpHack",
+    {
+        Text = "Jump Hack",
+        Default = false
+    }
+)
+
+MovementBox:AddSlider(
+    "JumpPower",
+    {
+        Text = "Jump Power",
+        Default = 80,
+        Min = 50,
+        Max = 300,
+        Rounding = 0
+    }
+)
+
+local BHopBox = Tabs.Player:AddLeftGroupbox("Bunny Hop / Strafe")
+
+BHopBox:AddToggle(
+    "BunnyHop",
+    {
+        Text = "Bunny Hop",
+        Default = false
+    }
+)
+
+BHopBox:AddSlider(
+    "BHopStartSpeed",
+    {
+        Text = "Starting Speed",
+        Default = 25,
+        Min = 10,
+        Max = 100,
+        Rounding = 0
+    }
+)
+
+BHopBox:AddSlider(
+    "BHopGain",
+    {
+        Text = "Speed Per Jump",
+        Default = 5,
+        Min = 1,
+        Max = 100,
+        Rounding = 0
+    }
+)
+
+BHopBox:AddToggle(
+    "AutoStrafe",
+    {
+        Text = "Auto Strafe",
+        Default = false
+    }
+)
+
+BHopBox:AddSlider(
+    "StrafeSpeed",
+    {
+        Text = "Air Strafe Speed",
+        Default = 40,
+        Min = 10,
+        Max = 300,
+        Rounding = 0
+    }
+)
+
+local FlyBox = Tabs.Player:AddLeftGroupbox("Fly")
+
+FlyBox:AddToggle(
+    "Fly",
+    {
+        Text = "Fly",
+        Default = false
+    }
+):AddKeyPicker(
+    "FlyKey",
+    {
+        Default = "F",
+        Mode = "Toggle",
+        SyncToggleState = true,
+        Text = "Fly",
+        NoUI = false
+    }
+)
+
+FlyBox:AddSlider(
+    "FlySpeed",
+    {
+        Text = "Fly Speed",
+        Default = 70,
+        Min = 10,
+        Max = 500,
+        Rounding = 0
+    }
+)
+
+local CameraBox = Tabs.Player:AddRightGroupbox("Third Person")
+
+CameraBox:AddToggle(
+    "ThirdPerson",
+    {
+        Text = "Coordinate Third Person",
+        Default = false
+    }
+)
+
+CameraBox:AddSlider(
+    "ThirdDistance",
+    {
+        Text = "Distance",
+        Default = 10,
+        Min = 2,
+        Max = 40,
+        Rounding = 1
+    }
+)
+
+CameraBox:AddSlider(
+    "ThirdHeight",
+    {
+        Text = "Height",
+        Default = 2,
+        Min = -5,
+        Max = 10,
+        Rounding = 1
+    }
+)
+
+CameraBox:AddSlider(
+    "ThirdSide",
+    {
+        Text = "Side Offset",
+        Default = 0,
+        Min = -10,
+        Max = 10,
+        Rounding = 1
+    }
+)
+
+CameraBox:AddSlider(
+    "ThirdSensitivity",
+    {
+        Text = "RMB Sensitivity",
+        Default = 0.18,
+        Min = 0.03,
+        Max = 1,
+        Rounding = 2
+    }
+)
+
+local AABox = Tabs.Player:AddRightGroupbox("Anti Aim")
+
+AABox:AddToggle(
+    "AntiAim",
+    {
+        Text = "Anti Aim",
+        Default = false
+    }
+)
+
+AABox:AddToggle(
+    "HideHead",
+    {
+        Text = "Hide Head",
+        Default = true
+    }
+)
+
+AABox:AddDropdown(
+    "AntiAimMode",
+    {
+        Text = "Mode",
+        Values = {
+            "Spin",
+            "Left/Right",
+            "Up/Down"
+        },
+        Default = 1,
+        Multi = false
+    }
+)
+
+AABox:AddSlider(
+    "AntiAimSpeed",
+    {
+        Text = "Speed",
+        Default = 720,
+        Min = 90,
+        Max = 2880,
+        Rounding = 0,
+        Suffix = " deg/s"
+    }
+)
+
+AABox:AddSlider(
+    "HeadHideAmount",
+    {
+        Text = "Head Hide",
+        Default = 0.7,
+        Min = 0,
+        Max = 1.5,
+        Rounding = 2
+    }
+)
+
+--========================================================
+-- MUSIC TAB
+--========================================================
+
+local MusicMain = Tabs.Music:AddLeftGroupbox("Music Player")
+
+MusicMain:AddToggle(
+    "MusicEnabled",
+    {
+        Text = "Music Enabled",
+        Default = true
+    }
+):AddKeyPicker(
+    "MusicToggleKey",
+    {
+        Default = "M",
+        Mode = "Toggle",
+        SyncToggleState = true,
+        Text = "Music",
+        NoUI = false
+    }
+)
+
+MusicMain:AddToggle(
+    "ShowMusicHUD",
+    {
+        Text = "Show Linoria Music Player",
+        Default = true
+    }
+)
+
+MusicMain:AddToggle(
+    "MusicLoop",
+    {
+        Text = "Loop Current Track",
+        Default = false
+    }
+)
+
+MusicMain:AddSlider(
+    "MusicVolume",
+    {
+        Text = "Volume",
+        Default = 0.5,
+        Min = 0,
+        Max = 1,
+        Rounding = 2
+    }
+)
+
+MusicMain:AddButton({
+    Text = "Force Show Player HUD",
+    Func = function()
+        Toggles.ShowMusicHUD:SetValue(true)
+        MusicGui.Enabled = true
+        MusicOuter.Visible = true
+        MusicFrame.Visible = true
+        RefreshMusicHUD()
+    end
+})
+
+-- Requested round music function is intentionally a separate visible block.
