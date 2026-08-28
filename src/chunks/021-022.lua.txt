@@ -1,0 +1,361 @@
+    if NativeMain and CR4.PointInsideFrame(NativeMain, Point) then return true end
+    return false
+end
+
+function CR4.PlayClickSound()
+    if not State.ClickSounds then return end
+    local Id = CR4.GetClickSoundId()
+    if not Id then return end
+    ClickSound.SoundId = Id
+    ClickSound.Volume = State.ClickSoundVolume
+    pcall(function()
+        ClickSound.TimePosition = 0
+        ClickSound:Play()
+    end)
+end
+
+CR4.TrackConnection(UserInputService.InputBegan:Connect(function(Input)
+    if Input.UserInputType ~= Enum.UserInputType.MouseButton1 and Input.UserInputType ~= Enum.UserInputType.Touch then return end
+    local Point = Input.UserInputType == Enum.UserInputType.Touch and Vector2.new(Input.Position.X, Input.Position.Y) or UserInputService:GetMouseLocation()
+    if CR4.IsPointInLinoriaUI(Point) then CR4.PlayClickSound() end
+end))
+
+--==================================================
+-- NOTIFICATIONS / BACKDOORS TIMER / CONTACT
+--==================================================
+
+local NotificationSound = Instance.new("Sound")
+NotificationSound.Name = "Experiment17NotifySound"
+NotificationSound.Volume = State.NotificationSoundVolume
+NotificationSound.Parent = SoundService
+local MonsterQuestionMarks = setmetatable({}, {__mode="k"})
+
+local BackdoorsTimerLabel = Instance.new("TextLabel")
+BackdoorsTimerLabel.Name = "Experiment17BackdoorsTimer"
+BackdoorsTimerLabel.AnchorPoint = Vector2.new(0.5,0)
+BackdoorsTimerLabel.Position = UDim2.new(0.5,0,0,12)
+BackdoorsTimerLabel.Size = UDim2.fromOffset(240,34)
+BackdoorsTimerLabel.BackgroundColor3 = Color3.fromRGB(15,15,18)
+BackdoorsTimerLabel.BackgroundTransparency = 0.25
+BackdoorsTimerLabel.BorderSizePixel = 0
+BackdoorsTimerLabel.Font = Enum.Font.Code
+BackdoorsTimerLabel.TextColor3 = Color3.new(1,1,1)
+BackdoorsTimerLabel.TextStrokeTransparency = 0
+BackdoorsTimerLabel.TextSize = 18
+BackdoorsTimerLabel.Visible = false
+BackdoorsTimerLabel.ZIndex = 950
+BackdoorsTimerLabel.Parent = Library.ScreenGui
+local BTLCorner = Instance.new("UICorner"); BTLCorner.CornerRadius = UDim.new(0,8); BTLCorner.Parent = BackdoorsTimerLabel
+
+function CR4.PlayNotificationSound()
+    if not State.NotificationSounds then return end
+    local Index = tonumber(string.match(State.NotificationSoundSlot or "","%d+")) or 1
+    local Id = NOTIFICATION_SOUND_IDS[Index]
+    if type(Id) ~= "string" or Id == "" then return end
+    if not string.find(Id,"rbxassetid://",1,true) then Id = "rbxassetid://" .. Id end
+    NotificationSound.SoundId = Id; NotificationSound.Volume = State.NotificationSoundVolume; NotificationSound.TimePosition = 0; NotificationSound:Play()
+end
+
+function CR4.GetNearestWardrobe(Position)
+    local Best,BestD = nil,math.huge
+    for Target,Entry in pairs(ESPEntries) do
+        if Target and Target.Parent and Entry.Category == "Wardrobes" then
+            local P = CR4.GetWorldPosition(Target)
+            if P then local D=(P-Position).Magnitude; if D<BestD then Best,BestD=Target,D end end
+        end
+    end
+    return Best
+end
+
+local WardrobeThreatCategories = { Rush=true, Ambush=true, A60=true, A120=true, BackdoorRush=true }
+function CR4.MarkWardrobeDanger(Monster, Category)
+    if not State.MonsterQuestionMark or not WardrobeThreatCategories[Category] then return end
+    local P=CR4.GetWorldPosition(Monster); if not P then return end
+    local W=CR4.GetNearestWardrobe(P); if not W then return end
+    local Adornee=W:IsA("BasePart") and W or W:FindFirstChildWhichIsA("BasePart",true); if not Adornee then return end
+    local Existing=MonsterQuestionMarks[W]; if Existing then Existing:Destroy() end
+    local Gui=Instance.new("BillboardGui"); Gui.Name="Experiment17Danger"; Gui.Adornee=Adornee; Gui.AlwaysOnTop=true; Gui.Size=UDim2.fromOffset(70,70); Gui.StudsOffset=Vector3.new(0,4,0); Gui.Parent=Library.ScreenGui
+    local L=Instance.new("TextLabel"); L.BackgroundTransparency=1; L.Size=UDim2.fromScale(1,1); L.Text="?"; L.TextColor3=Color3.fromRGB(255,30,30); L.TextStrokeTransparency=0; L.TextScaled=true; L.Font=Enum.Font.GothamBlack; L.Parent=Gui
+    MonsterQuestionMarks[W]=Gui
+    task.delay(12,function() if Gui and Gui.Parent then Gui:Destroy() end if MonsterQuestionMarks[W]==Gui then MonsterQuestionMarks[W]=nil end end)
+end
+
+function CR4.OnMonsterSpawned(Target,Category)
+    if not MonsterCategorySet[Category] then return end
+    local Display=(Category=="OtherMonsters" and Target.Name) or (ESPCategories[Category] and ESPCategories[Category].Label) or Category
+    if State.MonsterNotifications then CR4.Notify(Display.." spawned",4) end
+    CR4.PlayNotificationSound()
+    CR4.MarkWardrobeDanger(Target,Category)
+end
+
+local LastMonsterNotified=setmetatable({}, {__mode="k"})
+local OldRegisterESP=CR4.RegisterESP
+function CR4.RegisterESP(Target,Category)
+    local Was=ESPEntries[Target]~=nil
+    OldRegisterESP(Target,Category)
+    if MonsterCategorySet[Category] and not Was and Target and Target.Parent and not LastMonsterNotified[Target] then
+        LastMonsterNotified[Target]=true; task.defer(CR4.OnMonsterSpawned,Target,Category)
+    end
+end
+
+function CR4.UpdateBackdoorsTimer()
+    if not State.ShowBackdoorsTimer then BackdoorsTimerLabel.Visible=false; return end
+    local Room50=CurrentRooms:FindFirstChild("50")
+    local TL=Room50 and Room50:FindFirstChild("TimerLever",true)
+    local DT=TL and TL:FindFirstChild("DisplayTimer",true)
+    local TextObj=nil
+    if DT and (DT:IsA("TextLabel") or DT:IsA("TextBox") or DT:IsA("TextButton")) then
+        TextObj=DT
+    elseif DT then
+        TextObj=DT:FindFirstChildWhichIsA("TextLabel",true) or DT:FindFirstChildWhichIsA("TextBox",true) or DT:FindFirstChildWhichIsA("TextButton",true)
+    end
+    if TextObj then BackdoorsTimerLabel.Text="Backdoors: "..tostring(TextObj.Text); BackdoorsTimerLabel.Visible=true else BackdoorsTimerLabel.Visible=false end
+end
+
+function CR4.CopyContact(Key)
+    local Link=CONTACT_LINKS[Key]
+    if type(Link)~="string" or Link=="" then CR4.Notify(Key.." link is empty",3); return end
+    local F=(getgenv and getgenv().setclipboard) or (type(setclipboard)=="function" and setclipboard or nil)
+    if type(F)=="function" then pcall(F,Link); CR4.Notify(Key.." copied",2) else CR4.Notify(Link,6) end
+end
+
+--==================================================
+-- WORLD WATCHERS / BATCHED ROOM PROCESSING
+--==================================================
+
+local RoomConnections = setmetatable({}, { __mode = "k" })
+local RoomBatching = setmetatable({}, { __mode = "k" })
+local RoomDirty = setmetatable({}, { __mode = "k" })
+local DropsConnection = nil
+
+function CR4.ProcessWorldObject(Object)
+    if IsUnloading or not Object or not Object.Parent then return end
+
+    if Object:IsA("ProximityPrompt") then
+        CR4.TrackPrompt(Object)
+        local function RecheckAncestors()
+            if not Object or not Object.Parent then return end
+            local A=Object.Parent
+            for _=1,8 do
+                if not A or A==workspace then break end
+                CR4.ProcessESPObject(A)
+                A=A.Parent
+            end
+        end
+        RecheckAncestors()
+        task.delay(0.12, RecheckAncestors)
+        task.delay(0.45, RecheckAncestors)
+    end
+    CR4.ProcessESPObject(Object)
+    CR4.ProcessXRayObject(Object)
+    if State.LowGFX then CR4.ApplyLowGFXObject(Object) end
+    if State.NoShadows then CR4.ApplyNoShadowObject(Object) end
+
+    if Object.Name == "TriggerSeek" and CachedLatestRoom and Object:IsDescendantOf(CachedLatestRoom) then CachedLatestRoomSeek = true end
+
+    if Object.Name == "PathfindNodes" then
+        local Room=Object.Parent
+        while Room and Room.Parent~=CurrentRooms do Room=Room.Parent end
+        local N=Room and tonumber(Room.Name)
+        if N then
+            local Prev=CurrentRooms:FindFirstChild(tostring(N-1))
+            if Prev then
+                local D=Prev:FindFirstChild("Door",true) or Prev:FindFirstChild("DoorNormal",true)
+                local T=D and CR4.GetDoorTarget(D)
+                if T then CR4.RegisterESP(T,"DangerDoor") end
+            end
+        end
+    end
+
+    if State.CustomTexture and State.CustomTextureMode == "Whole Map" and not CR4.IsPlayerCharacterObject(Object) then
+        local Id = CR4.NormalizeAssetId(State.CustomTextureID)
+        if Id then CR4.ApplyTextureObject(Object, Id) end
+    end
+end
+
+function CR4.ConnectRoom(Room)
+    if not Room or not Room.Parent or RoomConnections[Room] then return end
+    RoomBatching[Room] = true
+    local Pending = {}
+    local Seen = setmetatable({}, { __mode = "k" })
+
+    local WorkerRunning = false
+
+    local function Queue(Object)
+        if Object and Object.Parent and not Seen[Object] then
+            Seen[Object] = true
+            table.insert(Pending, Object)
+        end
+    end
+
+    local function StartWorker()
+        if WorkerRunning or IsUnloading then return end
+        WorkerRunning = true
+        task.spawn(function()
+            local Index = 1
+            while Index <= #Pending and Room.Parent and not IsUnloading do
+                local Budget = 8
+                while Budget > 0 and Index <= #Pending do
+                    local Object = Pending[Index]
+                    Index += 1
+                    Budget -= 1
+                    if Object and Object.Parent then
+                        CR4.ProcessWorldObject(Object)
+                        if not Object:IsA("BasePart") and not Object:IsA("ProximityPrompt") then
+                            local Children = Object:GetChildren()
+                            for _, Child in ipairs(Children) do Queue(Child) end
+                        end
+                    end
+                end
+                RunService.Heartbeat:Wait()
+            end
+            Pending = {}
+            Seen = setmetatable({}, { __mode = "k" })
+            WorkerRunning = false
+            RoomBatching[Room] = false
+            if tonumber(Room.Name) and tonumber(Room.Name) >= CachedLatestRoomNumber then CR4.RefreshLatestRoomCache() end
+            if State.SmartPath then task.defer(CR4.UpdateSmartPath, true) end
+        end)
+    end
+
+    RoomConnections[Room] = Room.DescendantAdded:Connect(function(Object)
+        Queue(Object)
+        StartWorker()
+    end)
+
+    Queue(Room)
+    for _, Child in ipairs(Room:GetChildren()) do Queue(Child) end
+    StartWorker()
+end
+
+function CR4.ConnectDrops(Drops)
+    CR4.DisconnectConnection(DropsConnection)
+    DropsConnection = nil
+    if not Drops then return end
+    task.spawn(function() CR4.ScanESPContainer(Drops, 120); CR4.BuildTextureTargetList() end)
+    DropsConnection = Drops.DescendantAdded:Connect(function(Object)
+        task.defer(CR4.ProcessWorldObject, Object)
+        task.defer(CR4.BuildTextureTargetList)
+    end)
+end
+
+for _, Room in ipairs(CurrentRooms:GetChildren()) do CR4.ConnectRoom(Room) end
+CR4.RefreshLatestRoomCache()
+CR4.ConnectDrops(workspace:FindFirstChild("Drops"))
+
+CR4.TrackConnection(CurrentRooms.ChildAdded:Connect(function(Room)
+    if tonumber(Room.Name) then CR4.RefreshLatestRoomCache() end
+    task.delay(0.12, function()
+        if Room and Room.Parent == CurrentRooms and not IsUnloading then CR4.ConnectRoom(Room) end
+    end)
+end))
+
+CR4.TrackConnection(CurrentRooms.ChildRemoved:Connect(function(Room)
+    if Room == CachedLatestRoom then CR4.RefreshLatestRoomCache() end
+end))
+
+CR4.TrackConnection(workspace.ChildAdded:Connect(function(Object)
+    task.defer(function()
+        if IsUnloading or not Object.Parent then return end
+        if Object.Name == "Drops" then CR4.ConnectDrops(Object); return end
+
+        local Name = Object.Name
+        if Name == "RushMoving" or Name == "AmbushMoving" or Name == "SeekMovingNewClone"
+            or Name == "Dread" or Name == "Screech" or OtherMonsterNames[Name]
+            or Name == "A60" or Name == "A120" or Name == "BackdoorLookman" or Name == "BackdoorRush"
+            or Name == "GlitchAmbush" or Name == "EntityModel" or Name == "NDA5OiBDT05GTElDVA=="
+            or Name == "GlitchFragment" or Name == "Glitch Fragment" or Name == "YellowLight"
+            or Name == "Glowstick" or Name == "Glowsticks" or Name == "Lighter" or Name == "Crucifix"
+            or Name == "RiftCandle" or Name == "StarVial" or Name == "Shears"
+            or Name == "Bulklight" or Name == "BandagePack" or Name == "Straplight" then
+            CR4.ScanESPContainer(Object, 100)
+            local Screech = CR4.GetScreechTarget(Object)
+            if Screech then CR4.FaceScreechAndRestore(Screech) end
+        end
+
+        if State.CustomTexture and State.CustomTextureMode == "Whole Map" and not Players:GetPlayerFromCharacter(Object) then
+            local Id = CR4.NormalizeAssetId(State.CustomTextureID)
+            if Id then CR4.ApplyTextureRoot(Object, Id) end
+        end
+    end)
+end))
+
+CR4.TrackConnection(workspace.DescendantAdded:Connect(function(Object)
+    CR4.RemoveDupeObject(Object)
+    CR4.ProcessAntiTouchObject(Object)
+    if State.LowGFX and not CR4.IsPlayerCharacterObject(Object) then CR4.ApplyLowGFXObject(Object) end
+    if State.NoShadows and not CR4.IsPlayerCharacterObject(Object) then CR4.ApplyNoShadowObject(Object) end
+    if CR4.ShouldProcessESPObject(Object) and not Object:IsDescendantOf(CurrentRooms) then task.defer(CR4.ProcessESPObject, Object) end
+    local ScreechTarget=CR4.GetScreechTarget(Object)
+    if ScreechTarget then task.defer(function() task.wait(0.03); CR4.FaceScreechAndRestore(ScreechTarget) end) end
+end))
+
+CR4.TrackConnection(Lighting.DescendantAdded:Connect(function(Object)
+    CR4.RegisterLightingObject(Object)
+    task.defer(CR4.EnforceVisualState)
+end))
+
+local CameraDescendantConnection = nil
+function CR4.ConnectCameraVisualWatcher(NewCamera)
+    CR4.DisconnectConnection(CameraDescendantConnection)
+    CameraDescendantConnection = nil
+    Camera = NewCamera or workspace.CurrentCamera or Camera
+    if not Camera then return end
+    for _, Object in ipairs(Camera:GetDescendants()) do CR4.RegisterLightingObject(Object) end
+    CameraDescendantConnection = Camera.DescendantAdded:Connect(function(Object)
+        CR4.RegisterLightingObject(Object)
+        task.defer(CR4.EnforceVisualState)
+    end)
+end
+CR4.ConnectCameraVisualWatcher(workspace.CurrentCamera)
+CR4.TrackConnection(workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+    CR4.ConnectCameraVisualWatcher(workspace.CurrentCamera)
+end))
+
+pcall(function()
+    RunService:BindToRenderStep("Experiment17CameraPre", Enum.RenderPriority.Camera.Value - 10, function()
+        if IsUnloading or A90Active or not State.ThirdPerson or State.SpectateEnabled then return end
+        CR4.ApplyThirdPerson()
+    end)
+end)
+
+pcall(function()
+    RunService:BindToRenderStep("Experiment17CameraEnforce", 10000, function(DeltaTime)
+        if IsUnloading or A90Active or AntiScreechBusy then return end
+        Camera = workspace.CurrentCamera or Camera
+        if not Camera then return end
+        if State.ThirdPerson and not State.SpectateEnabled then CR4.UpdateThirdPersonCamera(DeltaTime) end
+        if State.MouseUnlock then UserInputService.MouseBehavior = Enum.MouseBehavior.Default; UserInputService.MouseIconEnabled = true end
+        if State.FOVOverride then Camera.FieldOfView = State.FOV end
+    end)
+end)
+
+--==================================================
+-- UPDATE LOOPS
+--==================================================
+
+local BunnyAccumulator = 0
+local ESPReconcileAccumulator = 0
+local TimerAccumulator = 0
+
+CR4.TrackConnection(RunService.RenderStepped:Connect(function(DeltaTime)
+    if IsUnloading then return end
+
+    local A90Locked = CR4.UpdateA90Protection()
+    if not A90Locked then
+        if State.WalkSpeedEnabled or State.BunnyHop then CR4.ApplyWalkSpeed() else CR4.DestroySpeedBodyVelocity() end
+        CR4.ApplyCFrameSpeed(DeltaTime)
+        CR4.UpdateFly(DeltaTime)
+        if State.JumpEnabled or State.BunnyHop then
+            CR4.ApplyJumpSettings()
+            if not State.FlyEnabled and UserInputService:IsKeyDown(Enum.KeyCode.Space) then CR4.ForceJump() end
+        end
+        CR4.ApplyCameraOptions()
+        CR4.UpdateSpectate()
+
+        if State.MicroTPEnabled then
+            MicroTPAccumulator += DeltaTime
+            if MicroTPAccumulator >= State.MicroTPInterval then MicroTPAccumulator=0; CR4.MicroTPForward() end
+        else MicroTPAccumulator=0 end
+
+        if not AntiScreechBusy then CR4.UpdateCharacterSpin() end
