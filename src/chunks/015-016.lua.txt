@@ -1,0 +1,360 @@
+end
+
+function CR4.DestroyFlyObjects()
+    CR4.SafeDestroy(FlyBodyVelocity); CR4.SafeDestroy(FlyBodyGyro); CR4.SafeDestroy(FlyLinearVelocity); CR4.SafeDestroy(FlyAttachment)
+    FlyBodyVelocity=nil; FlyBodyGyro=nil; FlyLinearVelocity=nil; FlyAttachment=nil
+end
+
+function CR4.UpdateFly(dt)
+    if not State.FlyEnabled then CR4.DestroyFlyObjects(); return end
+    Camera = workspace.CurrentCamera or Camera
+    local _, Humanoid, Root = CR4.GetCharacter(); if not Camera or not Humanoid or not Root or Humanoid.Health <= 0 then return end
+    local Speed = (State.SeekSpeedhack and CR4.IsSeekActive()) and math.clamp(State.SeekSpeed,22,28) or math.clamp(State.FlySpeed,1,20)
+    local Move = CR4.GetFlyCameraMoveVector()
+    local Vertical = 0
+    if UserInputService:IsKeyDown(Enum.KeyCode.Space) or os.clock() < FlyVerticalPulseUntil then Vertical += 1 end
+    if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.C) then Vertical -= 1 end
+    local Velocity = Move*Speed + Vector3.new(0,Vertical*Speed,0)
+    if State.FlyMethod == "BodyVelocity" then
+        if not FlyBodyVelocity or FlyBodyVelocity.Parent ~= Root then
+            CR4.DestroyFlyObjects()
+            FlyBodyVelocity = Instance.new("BodyVelocity"); FlyBodyVelocity.Name="Experiment17Fly"; FlyBodyVelocity.MaxForce=Vector3.new(1e9,1e9,1e9); FlyBodyVelocity.P=25000; FlyBodyVelocity.Velocity=Vector3.zero; FlyBodyVelocity.Parent=Root
+        end
+        FlyBodyVelocity.MaxForce = Vector3.new(1e9,1e9,1e9)
+        FlyBodyVelocity.Velocity = Velocity
+        Root.AssemblyLinearVelocity = Velocity
+    elseif State.FlyMethod == "LinearVelocity" then
+        if not FlyLinearVelocity or FlyLinearVelocity.Parent ~= Root then
+            CR4.DestroyFlyObjects()
+            FlyAttachment=Instance.new("Attachment"); FlyAttachment.Name="Experiment17FlyAttachment"; FlyAttachment.Parent=Root
+            FlyLinearVelocity=Instance.new("LinearVelocity"); FlyLinearVelocity.Name="Experiment17LinearFly"; FlyLinearVelocity.Attachment0=FlyAttachment; FlyLinearVelocity.RelativeTo=Enum.ActuatorRelativeTo.World; FlyLinearVelocity.VelocityConstraintMode=Enum.VelocityConstraintMode.Vector; FlyLinearVelocity.ForceLimitsEnabled=false; FlyLinearVelocity.Parent=Root
+        end
+        FlyLinearVelocity.VectorVelocity = Velocity
+        Root.AssemblyLinearVelocity = Velocity
+    else
+        CR4.DestroyFlyObjects(); Root.AssemblyLinearVelocity = Vector3.zero
+        local Delta = Velocity*dt; if Delta.Magnitude > 0 then Root.CFrame = Root.CFrame + Delta end
+    end
+end
+
+local ThirdPersonCurrentCF = nil
+local ThirdPersonVisibleParts = {}
+local ThirdPersonCharacter = nil
+
+function CR4.RefreshThirdPersonParts(Character)
+    ThirdPersonCharacter = Character
+    table.clear(ThirdPersonVisibleParts)
+    if not Character then return end
+    for _, Object in ipairs(Character:GetDescendants()) do
+        if Object:IsA("BasePart") or Object:IsA("Decal") then table.insert(ThirdPersonVisibleParts, Object) end
+    end
+end
+
+function CR4.EnforceThirdPersonVisibility()
+    local Character = LocalPlayer.Character
+    if Character ~= ThirdPersonCharacter then CR4.RefreshThirdPersonParts(Character) end
+    for Index = #ThirdPersonVisibleParts, 1, -1 do
+        local Object = ThirdPersonVisibleParts[Index]
+        if not Object or not Object.Parent then
+            table.remove(ThirdPersonVisibleParts, Index)
+        elseif Object:IsA("BasePart") then
+            Object.LocalTransparencyModifier = 0
+        elseif Object:IsA("Decal") and Object.Name:lower() == "face" then
+            Object.Transparency = 0
+        end
+    end
+end
+
+function CR4.ApplyThirdPerson()
+    Camera = workspace.CurrentCamera or Camera
+    if State.ThirdPerson then
+        LocalPlayer.CameraMode = Enum.CameraMode.Classic
+        LocalPlayer.CameraMinZoomDistance = 0.5
+        LocalPlayer.CameraMaxZoomDistance = math.max(2, State.ThirdPersonOffsetZ + 4)
+        if Camera then Camera.CameraType = Enum.CameraType.Scriptable end
+        CR4.RefreshThirdPersonParts(LocalPlayer.Character)
+    else
+        ThirdPersonCurrentCF = nil
+        LocalPlayer.CameraMode = OriginalPlayerCamera.CameraMode
+        LocalPlayer.CameraMinZoomDistance = OriginalPlayerCamera.MinZoom
+        LocalPlayer.CameraMaxZoomDistance = OriginalPlayerCamera.MaxZoom
+
+        local RuntimeT = CR4.GetRuntimeStateTable()
+        if Camera then Camera.CameraType = Enum.CameraType.Scriptable end
+        if RuntimeT and type(RuntimeT.update) == "function" then pcall(RuntimeT.update) end
+    end
+end
+
+function CR4.UpdateThirdPersonCamera(DeltaTime)
+    if not State.ThirdPerson or State.SpectateEnabled or A90Active or AntiScreechBusy then
+        ThirdPersonCurrentCF = nil
+        return
+    end
+
+    Camera = workspace.CurrentCamera or Camera
+    if not Camera then return end
+
+    local Character, Humanoid, Root = CR4.GetCharacter()
+    if not Character or not Humanoid or Humanoid.Health <= 0 or not Root then return end
+
+    local RuntimeT = CR4.GetRuntimeStateTable()
+    local BaseCF = RuntimeT and RuntimeT.finalCamCFrame
+    if typeof(BaseCF) ~= "CFrame" then BaseCF = Camera.CFrame end
+
+    local X = math.clamp(State.ThirdPersonOffsetX or 0, -20, 20)
+    local Y = math.clamp(State.ThirdPersonOffsetY or 3, -5, 20)
+    local Z = math.clamp(State.ThirdPersonOffsetZ or State.ThirdPersonDistance or 10, 2, 35)
+
+    local Origin = BaseCF.Position
+    local DesiredPosition = Origin + BaseCF.RightVector * X + BaseCF.UpVector * Y - BaseCF.LookVector * Z
+
+    local Ray = DesiredPosition - Origin
+    if Ray.Magnitude > 0.01 then
+        local Params = RaycastParams.new()
+        Params.FilterType = Enum.RaycastFilterType.Exclude
+        Params.FilterDescendantsInstances = { Character }
+        Params.IgnoreWater = true
+
+        local Hit = workspace:Raycast(Origin, Ray, Params)
+        if Hit then
+            local SafeDistance = math.max(0.6, (Hit.Position - Origin).Magnitude - 0.35)
+            DesiredPosition = Origin + Ray.Unit * SafeDistance
+        end
+    end
+
+    local TargetCF = CFrame.lookAlong(DesiredPosition, BaseCF.LookVector, BaseCF.UpVector)
+    local Smooth = math.clamp(State.ThirdPersonSmooth or 0.22, 0, 1)
+    if not ThirdPersonCurrentCF then
+        ThirdPersonCurrentCF = TargetCF
+    elseif Smooth <= 0.01 then
+        ThirdPersonCurrentCF = TargetCF
+    else
+        local dt = tonumber(DeltaTime) or (1 / 60)
+        local Alpha = 1 - math.exp(-dt * (6 + Smooth * 28))
+        ThirdPersonCurrentCF = ThirdPersonCurrentCF:Lerp(TargetCF, math.clamp(Alpha, 0.05, 1))
+    end
+
+    Camera.CameraType = Enum.CameraType.Scriptable
+    Camera.CFrame = ThirdPersonCurrentCF
+    Camera.Focus = CFrame.new(Origin)
+    CR4.EnforceThirdPersonVisibility()
+end
+
+function CR4.ApplyCameraOptions()
+    Camera = workspace.CurrentCamera or Camera; if not Camera then return end
+    if State.ThirdPerson then CR4.ApplyThirdPerson() end
+    if State.MouseUnlock then UserInputService.MouseBehavior=Enum.MouseBehavior.Default; UserInputService.MouseIconEnabled=true end
+    if State.FOVOverride then Camera.FieldOfView=State.FOV end
+end
+
+function CR4.RestoreCameraOptions()
+    State.MouseUnlock=false; if Camera then Camera.FieldOfView=OriginalFOV end
+    State.ThirdPerson=false; CR4.ApplyThirdPerson(); CR4.DestroyFlyObjects()
+end
+
+function CR4.StopCharacterSpin()
+    CR4.SafeDestroy(SpinBodyAngularVelocity); SpinBodyAngularVelocity=nil
+    local _,Humanoid=CR4.GetCharacter(); if Humanoid and SpinOldAutoRotate~=nil then Humanoid.AutoRotate=SpinOldAutoRotate end
+    SpinOldAutoRotate=nil
+end
+
+function CR4.UpdateCharacterSpin()
+    if not State.FunCameraSpin then CR4.StopCharacterSpin(); return end
+    local _,Humanoid,Root=CR4.GetCharacter(); if not Humanoid or not Root or Humanoid.Health<=0 then return end
+    if SpinOldAutoRotate==nil then SpinOldAutoRotate=Humanoid.AutoRotate end
+    Humanoid.AutoRotate=false
+    if not SpinBodyAngularVelocity or SpinBodyAngularVelocity.Parent~=Root then
+        CR4.SafeDestroy(SpinBodyAngularVelocity)
+        SpinBodyAngularVelocity=Instance.new("BodyAngularVelocity"); SpinBodyAngularVelocity.Name="Experiment17CharacterSpin"; SpinBodyAngularVelocity.MaxTorque=Vector3.new(0,1e9,0); SpinBodyAngularVelocity.P=15000; SpinBodyAngularVelocity.Parent=Root
+    end
+    SpinBodyAngularVelocity.AngularVelocity=Vector3.new(0,math.rad(State.FunCameraSpinSpeed),0)
+end
+
+--==================================================
+-- SPECTATE
+--==================================================
+
+function CR4.StopSpectate()
+    State.SpectateEnabled = false
+    Camera = workspace.CurrentCamera
+    local _, Humanoid = CR4.GetCharacter()
+    if Camera and Humanoid then
+        Camera.CameraSubject = Humanoid
+        Camera.CameraType = Enum.CameraType.Custom
+    end
+end
+
+function CR4.UpdateSpectate()
+    if not State.SpectateEnabled then return end
+    Camera = workspace.CurrentCamera
+    local TargetPlayer = State.SpectatePlayerName and Players:FindFirstChild(State.SpectatePlayerName)
+    local TargetCharacter = TargetPlayer and TargetPlayer.Character
+    local TargetHumanoid = TargetCharacter and TargetCharacter:FindFirstChildOfClass("Humanoid")
+
+    if Camera and TargetHumanoid and TargetHumanoid.Health > 0 then
+        Camera.CameraSubject = TargetHumanoid
+        Camera.CameraType = Enum.CameraType.Custom
+    else
+        CR4.StopSpectate()
+        if Toggles.SpectateEnabled then Toggles.SpectateEnabled:SetValue(false) end
+    end
+end
+
+--==================================================
+-- AUTO PICKUP
+--==================================================
+
+local LastPromptFire = setmetatable({}, { __mode = "k" })
+local AutoLootAccumulator = 0
+
+function CR4.GetPromptWorldPosition(Prompt)
+    local Current = Prompt.Parent
+    while Current and Current ~= game do
+        if Current:IsA("Attachment") then return Current.WorldPosition end
+        if Current:IsA("BasePart") then return Current.Position end
+        Current = Current.Parent
+    end
+    return nil
+end
+
+function CR4.GetAutoPromptCategory(Prompt)
+    if CR4.HasAncestorNamed(Prompt, "JeffShop_Hotel", CurrentRooms) then return nil end
+    if CR4.HasAncestorNamed(Prompt, "GoldPile", CurrentRooms) then return "Gold" end
+    if CR4.HasAncestorNamed(Prompt, "KeyObtain", CurrentRooms)
+        or CR4.HasAncestorNamed(Prompt, "Lockpick", CurrentRooms)
+        or CR4.HasAncestorNamed(Prompt, "SkeletonKey", CurrentRooms)
+        or CR4.HasAncestorNamed(Prompt, "ElectricalKeyObtain", CurrentRooms) then
+        return "Keys"
+    end
+
+    local LootNames = {
+        ChestBox = true, ChestBoxLocked = true, DrawerContainer = true, Toolshed_Small = true,
+        Vitamins = true, Battery = true, Bandage = true, Candle = true, CrucifixOnTheWall = true,
+        Crucifix = true, Flashlight = true, Lighter = true, YellowLight = true, Glowstick = true,
+        AlarmClock = true, LiveHintBook = true, LibraryHintPaper = true, Smoothie = true,
+        Green_Herb = true, LiveBreakerPolePickup = true,
+    }
+    if CR4.FindAncestorFromSet(Prompt, LootNames, CurrentRooms) then return "Loot" end
+    return nil
+end
+
+function CR4.GetFirePromptFunction()
+    local Env = getgenv and getgenv() or nil
+    if Env and type(Env.fireproximityprompt) == "function" then return Env.fireproximityprompt end
+    if type(fireproximityprompt) == "function" then return fireproximityprompt end
+    return nil
+end
+
+function CR4.TriggerPrompt(Prompt)
+    if not Prompt or not Prompt.Parent or not Prompt.Enabled then return end
+    local Now = os.clock()
+    local AutoCategory = CR4.GetAutoPromptCategory(Prompt)
+    local Cooldown = AutoCategory == "Loot" and 2.0 or 0.65
+    if LastPromptFire[Prompt] and Now - LastPromptFire[Prompt] < Cooldown then return end
+    LastPromptFire[Prompt] = Now
+
+    CR4.RememberPrompt(Prompt)
+    local Kind = CR4.GetPromptKind(Prompt)
+    local HoldTime = math.max(0, PromptTimes[Kind] or 0.2)
+    PromptApplyGuard[Prompt] = true
+    pcall(function()
+        Prompt.MaxActivationDistance = math.max(Prompt.MaxActivationDistance, State.AutoLootDistance + 3)
+        Prompt.RequiresLineOfSight = false
+        Prompt.HoldDuration = HoldTime
+    end)
+    PromptApplyGuard[Prompt] = nil
+
+    local FireFunction = CR4.GetFirePromptFunction()
+    local FiredByExecutor = false
+    if FireFunction then
+        FiredByExecutor = pcall(FireFunction, Prompt)
+        if not FiredByExecutor then FiredByExecutor = pcall(FireFunction, Prompt, 1) end
+    end
+
+    if not FiredByExecutor then
+        task.spawn(function()
+            pcall(function()
+                Prompt:InputHoldBegin()
+                task.wait(HoldTime + 0.05)
+                if Prompt and Prompt.Parent then Prompt:InputHoldEnd() end
+            end)
+        end)
+    else
+        task.delay(0.08, function()
+            if Prompt and Prompt.Parent and Prompt.Enabled then
+                pcall(function()
+                    Prompt:InputHoldBegin()
+                    task.wait(HoldTime + 0.02)
+                    if Prompt and Prompt.Parent then Prompt:InputHoldEnd() end
+                end)
+            end
+        end)
+    end
+
+    task.delay(HoldTime + 0.08, function()
+        if Prompt and Prompt.Parent then CR4.UpdatePrompt(Prompt) end
+    end)
+end
+
+function CR4.ScanAutoLootRegistry()
+    if not State.AutoGold and not State.AutoKeys and not State.AutoLoot then return end
+    local _, Humanoid, Root = CR4.GetCharacter()
+    if not Humanoid or Humanoid.Health <= 0 or not Root then return end
+
+    for Prompt in pairs(PromptRegistry) do
+        if not Prompt or not Prompt.Parent then
+            PromptRegistry[Prompt] = nil
+        elseif Prompt.Enabled then
+            local Category = CR4.GetAutoPromptCategory(Prompt)
+            local ShouldFire = (Category == "Gold" and (State.AutoGold or State.AutoLoot))
+                or (Category == "Keys" and (State.AutoKeys or State.AutoLoot))
+                or (Category == "Loot" and State.AutoLoot)
+            if ShouldFire then
+                local Position = CR4.GetPromptWorldPosition(Prompt)
+                if Position and (Position - Root.Position).Magnitude <= State.AutoLootDistance then CR4.TriggerPrompt(Prompt) end
+            end
+        end
+    end
+end
+
+--==================================================
+-- SOURCE-INSPIRED CLIENT PROTECTIONS / ROOM 50
+--==================================================
+
+local RenamedClientModules = {}
+local OriginalShadeResult = nil
+local FakeShadeResult = nil
+local AntiTouchOriginal = setmetatable({}, { __mode = "k" })
+local FigureRemoteAccumulator = 0
+local EyesAccumulator = 0
+local Room50Accumulator = 0
+local Room50LastCode = ""
+
+local Room50ShapeByOffset = {
+    [0] = "pentagon",
+    [50] = "triangle",
+    [100] = "square",
+    [150] = "star",
+    [200] = "cross",
+    [250] = "hexagon",
+    [300] = "diamond",
+    [350] = "circle",
+}
+
+function CR4.GetRemoteListenerModules()
+    local PG = LocalPlayer:FindFirstChild("PlayerGui")
+    local MainUI = PG and PG:FindFirstChild("MainUI")
+    if not MainUI then return nil end
+    local Initiator = MainUI:FindFirstChild("Initiator")
+    local MainGame = Initiator and Initiator:FindFirstChild("Main_Game")
+    local RemoteListener = MainGame and MainGame:FindFirstChild("RemoteListener")
+    return RemoteListener and RemoteListener:FindFirstChild("Modules")
+end
+
+function CR4.SetClientModuleDisabled(ModuleName, Disabled)
+    local Modules = CR4.GetRemoteListenerModules()
+    if not Modules then return false end
+
+    local Normal = Modules:FindFirstChild(ModuleName)
+    local DisabledName = ModuleName .. "X"
+    local DisabledModule = Modules:FindFirstChild(DisabledName)
