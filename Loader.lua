@@ -1,10 +1,9 @@
+\
 -- Experiment 17 | Rivals
--- Logical module loader. Each feature is compiled separately, so the old
--- monolithic Luau register limit is not shared across the whole script.
+-- Physical logical module loader. Each feature is compiled separately.
 
 local BASE = "https://raw.githubusercontent.com/GasterNoCopyAble/Experiment17_Rivals/main/src/"
 local MODULES = {
-    "Source.lua",
     "Core.lua",
     "Prompts.lua",
     "ESP.lua",
@@ -22,16 +21,12 @@ local MODULES = {
 
 local baseEnv = (getgenv and getgenv()) or _G
 local previous = rawget(baseEnv, "__Experiment17RivalsContext")
-
 if previous and previous.Library and type(previous.Library.Unload) == "function" then
-    pcall(function()
-        previous.Library:Unload()
-    end)
+    pcall(function() previous.Library:Unload() end)
 end
 
 local canSetEnv = type(setfenv) == "function"
 local Context
-
 if canSetEnv then
     Context = setmetatable({
         __Experiment17Rivals = true,
@@ -41,22 +36,19 @@ if canSetEnv then
         __newindex = rawset,
     })
 else
-    -- Fallback for executors that expose loadstring but not setfenv.
-    -- Exported module state then lives directly in getgenv().
     Context = baseEnv
     Context.__Experiment17Rivals = true
     Context.__LoadedModules = {}
 end
-
 baseEnv.__Experiment17RivalsContext = Context
 
 local function loadModule(name)
-    local okHttp, source = pcall(game.HttpGet, game, BASE .. name)
+    local okHttp, body = pcall(game.HttpGet, game, BASE .. name)
     if not okHttp then
-        error(("Experiment17_Rivals: failed to download %s: %s"):format(name, tostring(source)))
+        error(("Experiment17_Rivals: failed to download %s: %s"):format(name, tostring(body)))
     end
 
-    local chunk, compileError = loadstring(source)
+    local chunk, compileError = loadstring(body)
     if not chunk then
         error(("Experiment17_Rivals: compile error in %s: %s"):format(name, tostring(compileError)))
     end
