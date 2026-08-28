@@ -1,0 +1,360 @@
+    local FaceVisible = A90Face and pcall(function() return A90Face.Visible end) and A90Face.Visible
+    local StopVisible = A90StopIcon and pcall(function() return A90StopIcon.Visible end) and A90StopIcon.Visible
+    return FaceVisible or StopVisible
+end
+
+function CR4.BeginA90Lock()
+    if A90Active then return end
+    Camera = workspace.CurrentCamera or Camera
+    local _, Humanoid, Root = CR4.GetCharacter()
+    local RuntimeT = CR4.GetRuntimeStateTable()
+    A90Saved = {
+        CameraCFrame = Camera and Camera.CFrame or nil,
+        CameraType = Camera and Camera.CameraType or nil,
+        WalkSpeed = Humanoid and Humanoid.WalkSpeed or nil,
+        JumpPower = Humanoid and Humanoid.JumpPower or nil,
+        JumpHeight = Humanoid and Humanoid.JumpHeight or nil,
+        DisableMovement = RuntimeT and RuntimeT.disableMovement or nil,
+        Sprinting = RuntimeT and RuntimeT.sprinting or nil,
+    }
+    if PlayerControls then pcall(function() PlayerControls:Disable() end) end
+    if RuntimeT then RuntimeT.disableMovement = true; RuntimeT.sprinting = false end
+    if Humanoid then Humanoid.WalkSpeed = 0; Humanoid.JumpPower = 0; Humanoid.JumpHeight = 0 end
+    if Root then Root.AssemblyLinearVelocity = Vector3.zero; Root.AssemblyAngularVelocity = Vector3.zero end
+    if Camera then Camera.CameraType = Enum.CameraType.Scriptable end
+    A90Active = true
+end
+
+function CR4.EndA90Lock()
+    if not A90Active then return end
+    Camera = workspace.CurrentCamera or Camera
+    local _, Humanoid = CR4.GetCharacter()
+    local RuntimeT = CR4.GetRuntimeStateTable()
+    if RuntimeT and A90Saved then
+        if A90Saved.DisableMovement ~= nil then RuntimeT.disableMovement = A90Saved.DisableMovement else RuntimeT.disableMovement = false end
+        if A90Saved.Sprinting ~= nil then RuntimeT.sprinting = A90Saved.Sprinting end
+    end
+    if PlayerControls then pcall(function() PlayerControls:Enable() end) end
+    if Humanoid and A90Saved then
+        if A90Saved.WalkSpeed ~= nil then Humanoid.WalkSpeed = A90Saved.WalkSpeed end
+        if A90Saved.JumpPower ~= nil then Humanoid.JumpPower = A90Saved.JumpPower end
+        if A90Saved.JumpHeight ~= nil then Humanoid.JumpHeight = A90Saved.JumpHeight end
+    end
+    if Camera and A90Saved then
+        if A90Saved.CameraType then Camera.CameraType = A90Saved.CameraType end
+        if A90Saved.CameraCFrame then Camera.CFrame = A90Saved.CameraCFrame end
+    end
+    A90Active = false
+    A90Saved = nil
+    if State.JumpEnabled or State.BunnyHop then CR4.ApplyJumpSettings() end
+    if State.WalkSpeedEnabled or State.BunnyHop then CR4.ApplyWalkSpeed() end
+    if State.ThirdPerson then CR4.ApplyThirdPerson() end
+end
+
+function CR4.UpdateA90Protection()
+    if not State.AntiA90 then
+        if A90Active then CR4.EndA90Lock() end
+        return false
+    end
+    if CR4.IsA90Visible() then
+        CR4.BeginA90Lock()
+        Camera = workspace.CurrentCamera or Camera
+        local _, Humanoid, Root = CR4.GetCharacter()
+        local RuntimeT = CR4.GetRuntimeStateTable()
+        if RuntimeT then RuntimeT.disableMovement = true; RuntimeT.sprinting = false end
+        if Humanoid then Humanoid.WalkSpeed = 0; Humanoid.JumpPower = 0; Humanoid.JumpHeight = 0 end
+        if Root then Root.AssemblyLinearVelocity = Vector3.zero; Root.AssemblyAngularVelocity = Vector3.zero end
+        if Camera and A90Saved and A90Saved.CameraCFrame then Camera.CameraType = Enum.CameraType.Scriptable; Camera.CFrame = A90Saved.CameraCFrame end
+        return true
+    end
+    if A90Active then CR4.EndA90Lock() end
+    return false
+end
+
+function CR4.UpdateRuntimeProtectionStates()
+    local T = CR4.GetRuntimeStateTable()
+    if not T then return end
+    if State.AntiStun then T.stunned = false end
+    if State.AntiFigure then T.crouching = false end
+    if State.AntiRush or State.AntiAmbush or State.AntiA60 or State.AntiA120 or State.AntiBackdoorRush or State.AntiGlitchAmbush then
+        T.hiding = false
+    end
+end
+
+local AntiTeleportLastSafeCFrame = nil
+local ThreatEvadeActive = false
+local ThreatEvadeLockCFrame = nil
+local ThreatReturnCFrame = nil
+local ThreatEvadeName = nil
+
+local ThreatProtectionMap = {
+    RushMoving = "AntiRush",
+    AmbushMoving = "AntiAmbush",
+    A60 = "AntiA60",
+    A120 = "AntiA120",
+    BackdoorRush = "AntiBackdoorRush",
+    GlitchAmbush = "AntiGlitchAmbush",
+}
+
+local EntityTPThreatNames = { "RushMoving", "AmbushMoving", "A60", "A120", "BackdoorRush", "GlitchAmbush" }
+
+function CR4.AnyThreatProtectionEnabled()
+    for _, StateKey in pairs(ThreatProtectionMap) do if State[StateKey] then return true end end
+    return false
+end
+
+function CR4.GetActiveThreat()
+    for Name, StateKey in pairs(ThreatProtectionMap) do
+        if State[StateKey] then
+            local Object = workspace:FindFirstChild(Name)
+            if Object then return Object, Name, StateKey end
+        end
+    end
+    return nil, nil, nil
+end
+
+function CR4.GetActiveEntityTPThreat()
+    if not State.AntiEntityTP then return nil, nil end
+    for _, Name in ipairs(EntityTPThreatNames) do
+        local Object = workspace:FindFirstChild(Name)
+        if Object then return Object, Name end
+    end
+    return nil, nil
+end
+
+function CR4.ResetThreatEvade()
+    if not ThreatEvadeActive then return end
+    local _, _, Root = CR4.GetCharacter()
+    if Root and ThreatReturnCFrame then
+        Root.CFrame = ThreatReturnCFrame
+        AntiTeleportLastSafeCFrame = ThreatReturnCFrame
+    end
+    ThreatEvadeActive = false
+    ThreatEvadeLockCFrame = nil
+    ThreatReturnCFrame = nil
+    ThreatEvadeName = nil
+end
+
+function CR4.UpdatePositionProtection()
+    if A90Active then return end
+    local _, Humanoid, Root = CR4.GetCharacter()
+    if not Humanoid or Humanoid.Health <= 0 or not Root then return end
+
+    local Threat, ThreatName = CR4.GetActiveEntityTPThreat()
+    if State.AntiEntityTP and Threat then
+        if not ThreatEvadeActive then
+            ThreatEvadeActive = true
+            ThreatEvadeName = ThreatName
+            ThreatReturnCFrame = Root.CFrame
+            ThreatEvadeLockCFrame = Root.CFrame + Vector3.new(0, math.max(100, State.ThreatEvadeHeight), 0)
+        elseif ThreatEvadeName ~= ThreatName then
+            ThreatEvadeName = ThreatName
+        end
+
+        Root.CFrame = ThreatEvadeLockCFrame
+        Root.AssemblyLinearVelocity = Vector3.zero
+        Root.AssemblyAngularVelocity = Vector3.zero
+        return
+    elseif ThreatEvadeActive then
+        CR4.ResetThreatEvade()
+    end
+
+    if State.AntiTeleport then
+        if not AntiTeleportLastSafeCFrame then
+            AntiTeleportLastSafeCFrame = Root.CFrame
+        else
+            local Delta = (Root.Position - AntiTeleportLastSafeCFrame.Position).Magnitude
+            if Delta > math.max(5, State.AntiTeleportThreshold) then
+                Root.CFrame = AntiTeleportLastSafeCFrame
+                Root.AssemblyLinearVelocity = Vector3.zero
+                Root.AssemblyAngularVelocity = Vector3.zero
+            else
+                AntiTeleportLastSafeCFrame = Root.CFrame
+            end
+        end
+    else
+        AntiTeleportLastSafeCFrame = nil
+    end
+end
+
+function CR4.SetAntiTeleportPosition()
+    local _,_,Root = CR4.GetCharacter()
+    if Root then AntiTeleportLastSafeCFrame = Root.CFrame end
+end
+
+--==================================================
+-- CUSTOM TEXTURES
+--==================================================
+
+local OriginalTextureProperties = setmetatable({}, { __mode = "k" })
+local SelectedTextureOverrides = setmetatable({}, { __mode = "k" })
+local TextureTargetMap = {}
+local TextureSelectedCategories = {}
+
+function CR4.NormalizeAssetId(Value)
+    if type(Value) ~= "string" then return nil end
+    Value = Value:gsub("%s+", "")
+    if Value == "" then return nil end
+    local Digits = Value:match("(%d+)")
+    if not Digits then return nil end
+    return "rbxassetid://" .. Digits
+end
+
+function CR4.RememberTextureProperty(Object, Property)
+    local Data = OriginalTextureProperties[Object]
+    if not Data then Data = {}; OriginalTextureProperties[Object] = Data end
+    if Data[Property] == nil then
+        local Success, Value = pcall(function() return Object[Property] end)
+        if Success then Data[Property] = Value end
+    end
+end
+
+function CR4.SetTextureProperty(Object, Property, AssetId)
+    CR4.RememberTextureProperty(Object, Property)
+    pcall(function() Object[Property] = AssetId end)
+end
+
+function CR4.ApplyTextureObject(Object, AssetId)
+    if not Object or not Object.Parent or not AssetId then return end
+    if Object:IsA("MeshPart") then
+        CR4.SetTextureProperty(Object, "TextureID", AssetId)
+    elseif Object:IsA("SpecialMesh") then
+        CR4.SetTextureProperty(Object, "TextureId", AssetId)
+    elseif Object:IsA("Decal") or Object:IsA("Texture") then
+        CR4.SetTextureProperty(Object, "Texture", AssetId)
+    elseif Object:IsA("SurfaceAppearance") then
+        CR4.SetTextureProperty(Object, "ColorMap", AssetId)
+    end
+end
+
+function CR4.ApplyTextureRoot(Root, AssetId)
+    if not Root or not Root.Parent or not AssetId then return end
+    CR4.ApplyTextureObject(Root, AssetId)
+    local Descendants = Root:GetDescendants()
+    for Index, Object in ipairs(Descendants) do
+        CR4.ApplyTextureObject(Object, AssetId)
+        if Index % 250 == 0 then task.wait() end
+    end
+end
+
+function CR4.RestoreTextureRoot(Root)
+    if not Root then return end
+    local function RestoreOne(Object)
+        local Data = OriginalTextureProperties[Object]
+        if Data and Object and Object.Parent then
+            for Property, Value in pairs(Data) do pcall(function() Object[Property] = Value end) end
+            OriginalTextureProperties[Object] = nil
+        end
+    end
+    RestoreOne(Root)
+    for _, Object in ipairs(Root:GetDescendants()) do RestoreOne(Object) end
+end
+
+function CR4.RestoreAllTextures()
+    for Object, Data in pairs(OriginalTextureProperties) do
+        if Object and Object.Parent then
+            for Property, Value in pairs(Data) do pcall(function() Object[Property] = Value end) end
+        end
+        OriginalTextureProperties[Object] = nil
+    end
+end
+
+function CR4.BuildTextureTargetList()
+    local Values = {}
+    TextureTargetMap = {}
+    local Counter = 0
+    for Target, Entry in pairs(ESPEntries) do
+        if Target and Target.Parent and not MonsterCategorySet[Entry.Category] then
+            Counter += 1
+            local Room = CR4.GetRoomNumberFromObject and CR4.GetRoomNumberFromObject(Target) or nil
+            local Name = string.format("%s | %s%s | %d", Entry.Category, CR4.GetDisplayName(Target, Entry.Category), Room and (" | R" .. Room) or "", Counter)
+            TextureTargetMap[Name] = Target
+            table.insert(Values, Name)
+        end
+    end
+    table.sort(Values)
+    if Options.TextureSelectedTarget then
+        Options.TextureSelectedTarget:SetValues(Values)
+        if #Values > 0 and not Options.TextureSelectedTarget.Value then Options.TextureSelectedTarget:SetValue(Values[1]) end
+    end
+end
+
+function CR4.IsPlayerCharacterObject(Object)
+    local Current = Object
+    while Current and Current ~= workspace do
+        if Current:IsA("Model") and Players:GetPlayerFromCharacter(Current) then return true end
+        Current = Current.Parent
+    end
+    return false
+end
+
+local CustomTextureGeneration = 0
+function CR4.ApplyCustomTextureMode()
+    CustomTextureGeneration += 1
+    local Generation = CustomTextureGeneration
+    CR4.RestoreAllTextures()
+    if not State.CustomTexture then return end
+
+    if State.CustomTextureMode == "Selected Objects" then
+        task.spawn(function()
+            for Target, Id in pairs(SelectedTextureOverrides) do
+                if Generation ~= CustomTextureGeneration then return end
+                if Target and Target.Parent and Id then CR4.ApplyTextureRoot(Target, Id) end
+            end
+        end)
+        return
+    end
+
+    local AssetId = CR4.NormalizeAssetId(State.CustomTextureID)
+    if not AssetId then return end
+
+    if State.CustomTextureMode == "Object Types" then
+        task.spawn(function()
+            for Target, Entry in pairs(ESPEntries) do
+                if Generation ~= CustomTextureGeneration then return end
+                if Target and Target.Parent and TextureSelectedCategories[Entry.Category] then
+                    CR4.ApplyTextureRoot(Target, AssetId)
+                    task.wait()
+                end
+            end
+        end)
+        return
+    end
+
+    task.spawn(function()
+        local Objects = workspace:GetDescendants()
+        for Index, Object in ipairs(Objects) do
+            if Generation ~= CustomTextureGeneration then return end
+            if not CR4.IsPlayerCharacterObject(Object)
+                and not Object:IsDescendantOf(HighlightFolder)
+                and not Object:IsDescendantOf(PathFolder) then
+                CR4.ApplyTextureObject(Object, AssetId)
+            end
+            if Index % 250 == 0 then task.wait() end
+        end
+    end)
+end
+
+--==================================================
+-- UI CLICK SOUND
+--==================================================
+
+local ClickSound = Instance.new("Sound")
+ClickSound.Name = "LinoriaClickSound"
+ClickSound.Volume = State.ClickSoundVolume
+ClickSound.Parent = SoundService
+
+function CR4.GetClickSoundId()
+    local Index = tonumber((State.ClickSoundSlot or ""):match("(%d+)")) or 1
+    return CR4.NormalizeAssetId(CLICK_SOUND_IDS[Index] or "")
+end
+
+function CR4.PointInsideFrame(Frame, Point)
+    if not Frame or not Frame.Visible then return false end
+    local Pos, Size = Frame.AbsolutePosition, Frame.AbsoluteSize
+    return Point.X >= Pos.X and Point.X <= Pos.X + Size.X and Point.Y >= Pos.Y and Point.Y <= Pos.Y + Size.Y
+end
+
+function CR4.IsPointInLinoriaUI(Point)
+    -- Compatibility name: this now checks the Legacy v22 root/menu.
+    local NativeMain = Library.Native and Library.Native.Main
