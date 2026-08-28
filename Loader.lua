@@ -29,17 +29,24 @@ if previous and previous.Library and type(previous.Library.Unload) == "function"
     end)
 end
 
-if type(setfenv) ~= "function" then
-    error("Experiment17_Rivals: executor does not provide setfenv; logical module environment cannot be created")
-end
+local canSetEnv = type(setfenv) == "function"
+local Context
 
-local Context = setmetatable({
-    __Experiment17Rivals = true,
-    __LoadedModules = {},
-}, {
-    __index = baseEnv,
-    __newindex = rawset,
-})
+if canSetEnv then
+    Context = setmetatable({
+        __Experiment17Rivals = true,
+        __LoadedModules = {},
+    }, {
+        __index = baseEnv,
+        __newindex = rawset,
+    })
+else
+    -- Fallback for executors that expose loadstring but not setfenv.
+    -- Exported module state then lives directly in getgenv().
+    Context = baseEnv
+    Context.__Experiment17Rivals = true
+    Context.__LoadedModules = {}
+end
 
 baseEnv.__Experiment17RivalsContext = Context
 
@@ -49,12 +56,14 @@ local function loadModule(name)
         error(("Experiment17_Rivals: failed to download %s: %s"):format(name, tostring(source)))
     end
 
-    local chunk, compileError = loadstring(source, "@Experiment17_Rivals/" .. name)
+    local chunk, compileError = loadstring(source)
     if not chunk then
         error(("Experiment17_Rivals: compile error in %s: %s"):format(name, tostring(compileError)))
     end
 
-    setfenv(chunk, Context)
+    if canSetEnv then
+        setfenv(chunk, Context)
+    end
 
     local okRun, runtimeError = pcall(chunk)
     if not okRun then
