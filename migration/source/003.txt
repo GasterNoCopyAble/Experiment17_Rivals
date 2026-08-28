@@ -1,0 +1,693 @@
+    }
+
+    local probeFolder = "Experiment17_FS_TEST"
+    local probeFile = probeFolder .. "/probe.txt"
+
+    local okFolder, errFolder = pcall(function()
+        if type(isfolder) == "function"
+            and not isfolder(probeFolder) then
+
+            makefolder(probeFolder)
+        end
+    end)
+
+    report.makefolder = okFolder
+
+    local okWrite, errWrite = pcall(function()
+        writefile(probeFile, "experiment17")
+    end)
+
+    report.writefile = okWrite
+
+    if type(isfile) == "function" then
+        local okIsFile, isFileResult = pcall(isfile, probeFile)
+
+        report.isfile =
+            okIsFile
+            and isFileResult == true
+    end
+
+    if type(listfiles) == "function" then
+        local okList, result = pcall(listfiles, probeFolder)
+
+        if okList and type(result) == "table" then
+            report.listfiles = true
+            report.listedCount = #result
+
+            print(
+                "[Experiment17 FS TEST] listfiles OK | folder="
+                .. probeFolder
+                .. " | count="
+                .. tostring(#result)
+            )
+
+            for i, item in ipairs(result) do
+                if i > 20 then
+                    break
+                end
+
+                print(
+                    "[Experiment17 FS TEST] entry "
+                    .. tostring(i)
+                    .. " = "
+                    .. tostring(item)
+                )
+            end
+        else
+            report.error =
+                "listfiles("
+                .. probeFolder
+                .. ") => "
+                .. tostring(result)
+
+            warn(
+                "[Experiment17 FS TEST] "
+                .. report.error
+            )
+        end
+    end
+
+    if CustomAsset and report.writefile then
+        local okAsset, asset = pcall(
+            CustomAsset,
+            probeFile
+        )
+
+        report.getcustomasset =
+            okAsset
+            and type(asset) == "string"
+            and asset ~= ""
+
+        if not report.getcustomasset then
+            print(
+                "[Experiment17 FS TEST] getcustomasset probe did not resolve text file; "
+                .. "this does not necessarily mean audio files will fail."
+            )
+        end
+    end
+
+    print("========== Experiment17 FS SELF TEST ==========")
+    print("makefolder:", report.makefolder)
+    print("writefile:", report.writefile)
+    print("isfile:", report.isfile)
+    print("listfiles:", report.listfiles)
+    print("list count:", report.listedCount)
+    print("getcustomasset callable:", CustomAsset ~= nil)
+    print("getcustomasset probe:", report.getcustomasset)
+    print("error:", report.error or "none")
+    print("================================================")
+
+    if report.listfiles then
+        Library:Notify(
+            "Filesystem test: listfiles WORKS. "
+            .. "Your selected music-folder path is the next thing to fix.",
+            7
+        )
+    else
+        Library:Notify(
+            "Filesystem test: listfiles FAILED even on a folder created by the script. "
+            .. "Folder scanning cannot work with this executor API. "
+            .. "Use Local Track Path instead.",
+            10
+        )
+    end
+
+    return report
+end
+
+local function AddLocalTrackByPath(path)
+    path = TrimMusicPath(path)
+
+    if path == "" then
+        Library:Notify("Enter a local audio path first", 3)
+        return false
+    end
+
+    if not IsSupportedAudioPath(path) then
+        Library:Notify(
+            "Unsupported extension. Use mp3/ogg/wav/flac/m4a/aac/opus",
+            5
+        )
+        return false
+    end
+
+    local resolvedPath = path
+
+    -- If isfile works, prefer whichever exact variant it accepts.
+    if type(isfile) == "function" then
+        for _, candidate in ipairs(MusicPathVariants(path)) do
+            local ok, exists = pcall(isfile, candidate)
+
+            if ok and exists == true then
+                resolvedPath = candidate
+                break
+            end
+        end
+    end
+
+    if HasTrack("local", resolvedPath) then
+        Library:Notify("Track already exists", 2)
+        return false
+    end
+
+    local soundId = ResolveLocalTrack(resolvedPath)
+
+    if not soundId then
+        Library:Notify(
+            "getcustomasset could not resolve this path: "
+            .. tostring(resolvedPath),
+            7
+        )
+        return false
+    end
+
+    local name =
+        resolvedPath:match("[^/\\\\]+$")
+        or resolvedPath
+
+    table.insert(Playlist, {
+        name = name,
+        kind = "local",
+        source = resolvedPath,
+        soundId = soundId
+    })
+
+    SavePlaylist()
+
+    if RefreshMusicHUD then
+        RefreshMusicHUD()
+    end
+
+    Library:Notify(
+        "Local track added: " .. tostring(name),
+        4
+    )
+
+    return true
+end
+
+local function DebugMusicFolder(folder)
+    if type(listfiles) ~= "function" then
+        Library:Notify("listfiles() is unavailable", 5)
+        return
+    end
+
+    folder = TrimMusicPath(folder)
+
+    if folder == "" then
+        folder = "Experiment17Music"
+    end
+
+    print("========== Experiment17 MUSIC DEBUG ==========")
+    print("Requested folder:", folder)
+
+    local anySuccess = false
+
+    for _, candidate in ipairs(MusicPathVariants(folder)) do
+        local entries, err = ListFilesExact(candidate)
+
+        if type(entries) == "table" then
+            anySuccess = true
+
+            print(
+                "[LISTFILES OK]",
+                candidate,
+                "entries=",
+                #entries
+            )
+
+            for index, entry in ipairs(entries) do
+                if index > 100 then
+                    print("... output capped at 100 entries")
+                    break
+                end
+
+                print(
+                    index,
+                    "[RAW]",
+                    tostring(entry),
+                    "[AUDIO]",
+                    IsSupportedAudioPath(entry),
+                    "[ISFILE]",
+                    TryIsFileExact(entry),
+                    "[ISFOLDER]",
+                    TryIsFolderExact(entry)
+                )
+            end
+        else
+            print(
+                "[LISTFILES FAIL]",
+                candidate,
+                tostring(err)
+            )
+        end
+    end
+
+    print("==============================================")
+
+    if anySuccess then
+        Library:Notify(
+            "Music debug printed raw listfiles() output to console",
+            5
+        )
+    else
+        Library:Notify(
+            "None of the folder path variants can be opened. Check console.",
+            6
+        )
+    end
+end
+
+local function ScanMusicFolder(folder)
+    if type(listfiles) ~= "function" then
+        Library:Notify("listfiles() unavailable", 5)
+        return
+    end
+
+    folder = TrimMusicPath(folder)
+
+    if folder == "" then
+        folder = "Experiment17Music"
+    end
+
+    local discovered = {}
+    local discoveredSet = {}
+    local visited = {}
+
+    local stats = {
+        folders = 0,
+        entries = 0,
+        audio = 0,
+        failed = 0,
+        added = 0,
+        ready = 0,
+        unresolved = 0
+    }
+
+    local MAX_DEPTH = 10
+    local MAX_ENTRIES = 5000
+
+    local function RememberAudio(rawPath)
+        rawPath = TrimMusicPath(rawPath)
+
+        if rawPath == ""
+            or not IsSupportedAudioPath(rawPath)
+            or discoveredSet[rawPath] then
+
+            return
+        end
+
+        discoveredSet[rawPath] = true
+        table.insert(discovered, rawPath)
+        stats.audio += 1
+    end
+
+    local function Walk(currentFolder, depth)
+        if depth > MAX_DEPTH
+            or stats.entries >= MAX_ENTRIES then
+
+            return
+        end
+
+        currentFolder = TrimMusicPath(currentFolder)
+
+        if visited[currentFolder] then
+            return
+        end
+
+        local entries, resolvedFolder, listError =
+            SafeListFiles(currentFolder)
+
+        if type(entries) ~= "table" then
+            stats.failed += 1
+
+            local failKey =
+                tostring(currentFolder)
+                .. "|"
+                .. tostring(listError or "")
+
+            if not visited["__FAIL__" .. failKey] then
+                visited["__FAIL__" .. failKey] = true
+
+                warn(
+                    "[Experiment17 MusicScan] listfiles failed | path="
+                    .. tostring(currentFolder)
+                    .. " | error="
+                    .. tostring(listError or "unknown")
+                )
+            end
+
+            return
+        end
+
+        resolvedFolder =
+            TrimMusicPath(
+                resolvedFolder or currentFolder
+            )
+
+        if visited[resolvedFolder] then
+            return
+        end
+
+        visited[currentFolder] = true
+        visited[resolvedFolder] = true
+        stats.folders += 1
+        stats.entries += #entries
+
+        for _, rawValue in ipairs(entries) do
+            if stats.entries >= MAX_ENTRIES then
+                break
+            end
+
+            local rawEntry = TrimMusicPath(rawValue)
+
+            if rawEntry ~= "" then
+                -- Most important rule: trust the exact raw path returned
+                -- by listfiles() before constructing anything ourselves.
+                local exactFolder =
+                    TryIsFolderExact(rawEntry)
+
+                local exactFile =
+                    TryIsFileExact(rawEntry)
+
+                if exactFolder then
+                    Walk(rawEntry, depth + 1)
+                elseif exactFile then
+                    RememberAudio(rawEntry)
+                elseif IsSupportedAudioPath(rawEntry) then
+                    -- Some executors have working listfiles() but flaky
+                    -- isfile(). If listfiles returned an audio-looking entry,
+                    -- still accept it.
+                    RememberAudio(rawEntry)
+                else
+                    -- Bare filename/folder fallback.
+                    local joined =
+                        JoinMusicPathRaw(
+                            resolvedFolder,
+                            rawEntry
+                        )
+
+                    if TryIsFolderExact(joined) then
+                        Walk(joined, depth + 1)
+                    elseif TryIsFileExact(joined) then
+                        RememberAudio(joined)
+                    elseif IsSupportedAudioPath(joined) then
+                        RememberAudio(joined)
+                    end
+                end
+            end
+        end
+    end
+
+    -- 1) Requested folder.
+    Walk(folder, 0)
+
+    -- 2) If that folder opened but contains no audio, or couldn't be
+    -- opened at all, search common executor workspace roots.
+    if #discovered == 0 then
+        local roots = {
+            "",
+            ".",
+            "workspace",
+            "Workspace"
+        }
+
+        for _, root in ipairs(roots) do
+            if stats.entries >= MAX_ENTRIES then
+                break
+            end
+
+            local entries = select(1, ListFilesExact(root))
+
+            if type(entries) == "table" then
+                Walk(root, 0)
+            end
+        end
+    end
+
+    table.sort(discovered, function(a, b)
+        return string.lower(a) < string.lower(b)
+    end)
+
+    for _, rawPath in ipairs(discovered) do
+        local added, ready =
+            AddLocalDiscoveredTrack(rawPath)
+
+        if added then
+            stats.added += 1
+
+            if ready then
+                stats.ready += 1
+            else
+                stats.unresolved += 1
+            end
+        end
+    end
+
+    SavePlaylist()
+
+    if RefreshMusicHUD then
+        RefreshMusicHUD()
+    end
+
+    print("========== Experiment17 MUSIC SCAN ==========")
+    print("Requested:", folder)
+    print("Folders:", stats.folders)
+    print("Raw entries:", stats.entries)
+    print("Audio discovered:", #discovered)
+    print("Added:", stats.added)
+    print("getcustomasset ready:", stats.ready)
+    print("Retry on play:", stats.unresolved)
+    print("Failed folders:", stats.failed)
+
+    for i, rawPath in ipairs(discovered) do
+        if i > 100 then
+            print("... discovered list capped at 100")
+            break
+        end
+
+        print("[AUDIO]", rawPath)
+    end
+
+    print("=============================================")
+
+    if #discovered == 0 then
+        Library:Notify(
+            "0 audio found. The script also searched common workspace roots. "
+            .. "Press Debug Music Folder and check console for RAW listfiles output.",
+            8
+        )
+    elseif stats.added == 0 then
+        Library:Notify(
+            "Found "
+            .. tostring(#discovered)
+            .. " audio file(s), but they are already in the playlist",
+            5
+        )
+    else
+        local suffix
+
+        if CustomAsset then
+            suffix =
+                tostring(stats.ready)
+                .. " ready / "
+                .. tostring(stats.unresolved)
+                .. " retry on play"
+        else
+            suffix =
+                "getcustomasset unavailable; discovery works but playback cannot"
+        end
+
+        Library:Notify(
+            "Found "
+            .. tostring(#discovered)
+            .. " | added "
+            .. tostring(stats.added)
+            .. " | "
+            .. suffix,
+            8
+        )
+    end
+end
+
+local function LoadSavedPlaylist()
+    if not FileAPI or not isfile(PlaylistFile) then
+        return
+    end
+
+    local okRead, raw = pcall(readfile, PlaylistFile)
+
+    if not okRead or type(raw) ~= "string" then
+        return
+    end
+
+    local okDecode, decoded = pcall(function()
+        return HttpService:JSONDecode(raw)
+    end)
+
+    if not okDecode or type(decoded) ~= "table" then
+        return
+    end
+
+    for _, entry in ipairs(decoded) do
+        if type(entry) == "table"
+            and type(entry.kind) == "string"
+            and type(entry.source) == "string" then
+
+            if entry.kind == "asset" then
+                local id, soundId = NormalizeAssetId(entry.source)
+
+                if id and not HasTrack("asset", id) then
+                    table.insert(Playlist, {
+                        name = entry.name or ("Asset " .. id),
+                        kind = "asset",
+                        source = id,
+                        soundId = soundId
+                    })
+                end
+            elseif entry.kind == "local" and CustomAsset then
+                if not HasTrack("local", entry.source) then
+                    local soundId = ResolveLocalTrack(entry.source)
+
+                    table.insert(Playlist, {
+                        name = entry.name or (entry.source:match("[^/\\]+$") or entry.source),
+                        kind = "local",
+                        source = entry.source,
+                        soundId = soundId
+                    })
+                end
+            end
+        end
+    end
+end
+
+local function PlayTrack(index)
+    if #Playlist == 0 then
+        MusicSound:Stop()
+        CurrentTrack = 0
+
+        if RefreshMusicHUD then
+            RefreshMusicHUD()
+        end
+
+        return
+    end
+
+    index = math.clamp(index, 1, #Playlist)
+
+    local track = Playlist[index]
+
+    if track.kind == "local" then
+        -- Local custom asset URLs can be session-specific, so resolve again
+        -- when needed instead of trusting an old cached URL forever.
+        if not track.soundId or track.soundId == "" then
+            track.soundId = ResolveLocalTrack(track.source)
+        end
+    end
+
+    if not track.soundId or track.soundId == "" then
+        Library:Notify(
+            "Track could not be loaded: " .. tostring(track.name),
+            4
+        )
+        return
+    end
+
+    CurrentTrack = index
+
+    MusicSound:Stop()
+    MusicSound.SoundId = track.soundId
+    MusicSound.TimePosition = 0
+    MusicSound.Looped = Toggles.MusicLoop and Toggles.MusicLoop.Value or false
+    MusicSound.Volume = Options.MusicVolume and Options.MusicVolume.Value or 0.5
+
+    local roundAllowsPlayback =
+        (not Toggles.RoundMusic)
+        or (not Toggles.RoundMusic.Value)
+        or RoundActive
+
+    if Toggles.MusicEnabled
+        and Toggles.MusicEnabled.Value
+        and roundAllowsPlayback then
+
+        MusicSound:Play()
+    end
+
+    if RefreshMusicHUD then
+        RefreshMusicHUD()
+    end
+end
+
+local function NextTrack()
+    if #Playlist == 0 then
+        return
+    end
+
+    local nextIndex = CurrentTrack + 1
+
+    if CurrentTrack <= 0 or nextIndex > #Playlist then
+        nextIndex = 1
+    end
+
+    PlayTrack(nextIndex)
+end
+
+local function PreviousTrack()
+    if #Playlist == 0 then
+        return
+    end
+
+    local prevIndex = CurrentTrack - 1
+
+    if CurrentTrack <= 0 then
+        prevIndex = #Playlist
+    elseif prevIndex < 1 then
+        prevIndex = #Playlist
+    end
+
+    PlayTrack(prevIndex)
+end
+
+local function DeleteTrack(index)
+    if index < 1 or index > #Playlist then
+        return
+    end
+
+    local deletingCurrent = index == CurrentTrack
+
+    table.remove(Playlist, index)
+
+    if #Playlist == 0 then
+        MusicSound:Stop()
+        CurrentTrack = 0
+    elseif deletingCurrent then
+        local replacement = math.clamp(index, 1, #Playlist)
+        PlayTrack(replacement)
+    elseif index < CurrentTrack then
+        CurrentTrack -= 1
+    end
+
+    SavePlaylist()
+
+    if RefreshMusicHUD then
+        RefreshMusicHUD()
+    end
+end
+
+--========================================================
+-- MUSIC HUD - LINORIA WINDOW STYLE
+--
+-- This is intentionally drawn like a small Linoria window:
+-- square outlines, accent strip, groupbox-like sections,
+-- flat buttons, no rounded "mobile card" styling.
+--========================================================
+
+local MusicGui = Instance.new("ScreenGui")
+MusicGui.Name = "Experiment17MusicHUD"
+MusicGui.ResetOnSpawn = false
+MusicGui.IgnoreGuiInset = true
+MusicGui.DisplayOrder = 999999
+MusicGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+MusicGui.Enabled = true
+MusicGui.Parent = LP:WaitForChild("PlayerGui")
+
