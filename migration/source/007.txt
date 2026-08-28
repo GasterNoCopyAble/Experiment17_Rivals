@@ -1,0 +1,730 @@
+--========================================================
+-- GAZE DODGE
+--========================================================
+
+local GazeAccumulator = 0
+
+Connections.Gaze = RunService.Heartbeat:Connect(function(dt)
+    GazeAccumulator += dt
+
+    if GazeAccumulator < 0.10 then
+        return
+    end
+
+    GazeAccumulator = 0
+
+    if Unloaded or not Toggles.GazeDodge.Value then
+        return
+    end
+
+    local myRoot = GetRoot()
+
+    if not myRoot then
+        return
+    end
+
+    local now = os.clock()
+
+    if now - LastDodge < Options.DodgeCooldown.Value then
+        return
+    end
+
+    local maxDistance = Options.GazeDistance.Value
+    local threshold =
+        math.cos(
+            math.rad(
+                Options.GazeAngle.Value
+            )
+        )
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == LP or not Alive(player) then
+            continue
+        end
+
+        if Toggles.TeamCheck.Value and IsTeammate(player) then
+            continue
+        end
+
+        if Toggles.IgnoreFriends.Value and IsFriend(player) then
+            continue
+        end
+
+        local char = player.Character
+        local enemyHead =
+            char
+            and char:FindFirstChild("Head")
+
+        if not enemyHead then
+            continue
+        end
+
+        local delta =
+            myRoot.Position
+            - enemyHead.Position
+
+        local distance = delta.Magnitude
+
+        if distance > maxDistance or distance <= 0 then
+            continue
+        end
+
+        local toMe = delta.Unit
+        local dot =
+            enemyHead.CFrame.LookVector:Dot(toMe)
+
+        if dot >= threshold then
+            local side =
+                enemyHead.CFrame.RightVector
+                * DodgeSide
+                * Options.DodgeDistance.Value
+
+            local destination =
+                myRoot.Position + side
+
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = {GetCharacter()}
+
+            local hit =
+                Workspace:Raycast(
+                    myRoot.Position,
+                    side,
+                    params
+                )
+
+            if hit then
+                DodgeSide *= -1
+
+                side =
+                    enemyHead.CFrame.RightVector
+                    * DodgeSide
+                    * Options.DodgeDistance.Value
+
+                destination =
+                    myRoot.Position + side
+            end
+
+            local rotation = myRoot.CFrame.Rotation
+
+            myRoot.CFrame =
+                CFrame.new(destination)
+                * rotation
+
+            DodgeSide *= -1
+            LastDodge = now
+            break
+        end
+    end
+end)
+
+--========================================================
+-- ESP LOOP
+--========================================================
+
+local ESPAccumulator = 0
+
+Connections.ESP = RunService.RenderStepped:Connect(function(dt)
+    ESPAccumulator += dt
+
+    local espRate = math.max(5, Options.ESPUpdateRate.Value)
+    local espInterval = 1 / espRate
+
+    if ESPAccumulator < espInterval then
+        return
+    end
+
+    ESPAccumulator = 0
+
+    if Unloaded then
+        return
+    end
+
+    Camera = Workspace.CurrentCamera
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == LP then
+            continue
+        end
+
+        local object = CreateESP(player)
+
+        local char = player.Character
+        local hum =
+            char
+            and char:FindFirstChildOfClass("Humanoid")
+        local root =
+            char
+            and char:FindFirstChild("HumanoidRootPart")
+
+        if not char or not hum or not root or hum.Health <= 0 then
+            object.Box.Visible = false
+            object.Tracer.Visible = false
+            object.Info.Visible = false
+            object.Name.Visible = false
+            object.HPBack.Visible = false
+
+            local highlight = Highlights[player]
+
+            if highlight then
+                highlight.Enabled = false
+            end
+
+            continue
+        end
+
+        local distance = GetDistance(player)
+
+        if distance > Options.ESPMaxDistance.Value then
+            object.Box.Visible = false
+            object.Tracer.Visible = false
+            object.Info.Visible = false
+            object.Name.Visible = false
+            object.HPBack.Visible = false
+
+            local highlight = Highlights[player]
+
+            if highlight then
+                highlight.Enabled = false
+            end
+
+            continue
+        end
+
+        local teammate = IsTeammate(player)
+
+        if teammate and not Toggles.TeamESP.Value then
+            object.Box.Visible = false
+            object.Tracer.Visible = false
+            object.Info.Visible = false
+            object.Name.Visible = false
+            object.HPBack.Visible = false
+
+            local highlight = Highlights[player]
+
+            if highlight then
+                highlight.Enabled = false
+            end
+
+            continue
+        end
+
+        if Toggles.ESPFriendCheck.Value and IsFriend(player) then
+            object.Box.Visible = false
+            object.Tracer.Visible = false
+            object.Info.Visible = false
+            object.Name.Visible = false
+            object.HPBack.Visible = false
+
+            local highlight = Highlights[player]
+
+            if highlight then
+                highlight.Enabled = false
+            end
+
+            continue
+        end
+
+        if Toggles.ESPVisibleOnly.Value then
+            local checkPart =
+                char:FindFirstChild("Head")
+                or root
+
+            if not RayVisible(player, checkPart) then
+                object.Box.Visible = false
+                object.Tracer.Visible = false
+                object.Info.Visible = false
+                object.Name.Visible = false
+                object.HPBack.Visible = false
+
+                local highlight = Highlights[player]
+
+                if highlight then
+                    highlight.Enabled = false
+                end
+
+                continue
+            end
+        end
+
+        local color =
+            teammate
+            and Options.TeamColor.Value
+            or Options.EnemyColor.Value
+
+        local highlight = GetHighlight(player)
+
+        if highlight then
+            highlight.Enabled = Toggles.HighlightESP.Value
+            highlight.FillColor = color
+            highlight.OutlineColor = color
+            highlight.FillTransparency = 0.7
+            highlight.OutlineTransparency = 0
+        end
+
+        local topLeft, bottomRight = CharacterBox(char)
+
+        if not topLeft then
+            object.Box.Visible = false
+            object.Tracer.Visible = false
+            object.Info.Visible = false
+            object.Name.Visible = false
+            object.HPBack.Visible = false
+            continue
+        end
+
+        local width =
+            bottomRight.X - topLeft.X
+
+        local height =
+            bottomRight.Y - topLeft.Y
+
+        local centerX =
+            topLeft.X + width / 2
+
+        -- BOX
+        object.Box.Position =
+            UDim2.fromOffset(
+                topLeft.X,
+                topLeft.Y
+            )
+
+        object.Box.Size =
+            UDim2.fromOffset(
+                width,
+                height
+            )
+
+        object.Box.Visible =
+            Toggles.BoxESP.Value
+
+        object.Stroke.Color = color
+        object.Stroke.Thickness = Options.BoxThickness.Value
+
+        object.Corner.CornerRadius =
+            UDim.new(
+                0,
+                Options.BoxRoundness.Value
+            )
+
+        object.FillCorner.CornerRadius =
+            object.Corner.CornerRadius
+
+        object.Fill.BackgroundColor3 = color
+        object.Fill.BackgroundTransparency =
+            Toggles.BoxFill.Value
+            and Options.FillTransparency.Value
+            or 1
+
+        -- NAME
+        object.Name.TextSize = Options.ESPTextSize.Value
+        object.Name.Text =
+            teammate
+            and ("[TEAM] " .. player.DisplayName)
+            or player.DisplayName
+
+        object.Name.Position =
+            UDim2.fromOffset(
+                centerX,
+                topLeft.Y - 2
+            )
+
+        object.Name.Visible =
+            Toggles.ESPName.Value
+
+        -- INFO
+        local infoParts = {}
+
+        if Toggles.ESPHealth.Value then
+            table.insert(
+                infoParts,
+                string.format(
+                    "%d/%d HP",
+                    math.floor(hum.Health),
+                    math.floor(hum.MaxHealth)
+                )
+            )
+        end
+
+        if Toggles.ESPDistance.Value then
+            table.insert(
+                infoParts,
+                tostring(math.floor(distance)) .. " studs"
+            )
+        end
+
+        object.Info.TextSize = Options.ESPTextSize.Value
+        object.Info.Text = table.concat(infoParts, " | ")
+        object.Info.Position =
+            UDim2.fromOffset(
+                centerX,
+                bottomRight.Y + 3
+            )
+
+        object.Info.Visible = #infoParts > 0
+
+        -- HEALTH BAR
+        object.HPBack.Position =
+            UDim2.fromOffset(
+                topLeft.X - 7,
+                topLeft.Y
+            )
+
+        object.HPBack.Size =
+            UDim2.fromOffset(
+                4,
+                height
+            )
+
+        object.HPBack.Visible =
+            Toggles.ESPHealthBar.Value
+
+        local healthRatio =
+            math.clamp(
+                hum.Health / math.max(hum.MaxHealth, 1),
+                0,
+                1
+            )
+
+        object.HPFill.Position =
+            UDim2.fromScale(
+                0,
+                1
+            )
+
+        object.HPFill.Size =
+            UDim2.new(
+                1,
+                0,
+                healthRatio,
+                0
+            )
+
+        object.HPFill.BackgroundColor3 =
+            Color3.fromRGB(
+                math.floor(255 * (1 - healthRatio)),
+                math.floor(255 * healthRatio),
+                60
+            )
+
+        -- TRACER
+        if Toggles.TracerESP.Value then
+            local originMode = Options.TracerOrigin.Value
+            local origin
+
+            if originMode == "Top" then
+                origin = Vector2.new(
+                    Camera.ViewportSize.X / 2,
+                    0
+                )
+            elseif originMode == "Center" then
+                origin = Camera.ViewportSize / 2
+            else
+                origin = Vector2.new(
+                    Camera.ViewportSize.X / 2,
+                    Camera.ViewportSize.Y
+                )
+            end
+
+            object.Tracer.BackgroundColor3 = color
+
+            DrawLine(
+                object.Tracer,
+                origin,
+                Vector2.new(
+                    centerX,
+                    bottomRight.Y
+                ),
+                1
+            )
+
+            object.Tracer.Visible = true
+        else
+            object.Tracer.Visible = false
+        end
+    end
+end)
+
+--========================================================
+-- MUSIC UPDATE LOOP
+--========================================================
+
+local MusicUpdateAccumulator = 0
+
+Connections.MusicUpdate = RunService.RenderStepped:Connect(function(dt)
+    MusicUpdateAccumulator += dt
+
+    if MusicUpdateAccumulator < 0.10 then
+        return
+    end
+
+    MusicUpdateAccumulator = 0
+
+    if Unloaded then
+        return
+    end
+
+    local length = MusicSound.TimeLength or 0
+    local position = MusicSound.TimePosition or 0
+
+    if length > 0 then
+        local ratio = math.clamp(position / length, 0, 1)
+        ProgressFill.Size = UDim2.fromScale(ratio, 1)
+    else
+        ProgressFill.Size = UDim2.fromScale(0, 1)
+    end
+
+    ElapsedLabel.Text = FormatTime(position)
+    RemainingLabel.Text = "-" .. FormatTime(math.max(0, length - position))
+
+    PlayButton.Text =
+        MusicSound.IsPlaying
+        and "Pause"
+        or "Play"
+
+    LoopButton.Text =
+        Toggles.MusicLoop.Value
+        and "Loop ON"
+        or "Loop"
+
+    MusicOuter.Visible =
+        Toggles.ShowMusicHUD.Value
+        and not Unloaded
+
+    MusicFrame.Visible = true
+end)
+
+--========================================================
+-- CALLBACKS
+--========================================================
+
+local function ResetTarget()
+    CurrentTarget = nil
+end
+
+Toggles.TeamCheck:OnChanged(ResetTarget)
+Toggles.IgnoreFriends:OnChanged(ResetTarget)
+Toggles.WallCheck:OnChanged(ResetTarget)
+Options.AimPart:OnChanged(ResetTarget)
+Options.MaxAimDistance:OnChanged(ResetTarget)
+
+Toggles.Particles:OnChanged(UpdateParticles)
+Options.ParticleType:OnChanged(UpdateParticles)
+Options.ParticleRegion:OnChanged(UpdateParticles)
+Options.ParticleRadius:OnChanged(UpdateParticles)
+Options.ParticleAmount:OnChanged(UpdateParticles)
+Options.ParticleColor:OnChanged(UpdateParticles)
+Options.ParticleTexture:OnChanged(UpdateParticles)
+Options.ParticleSize:OnChanged(UpdateParticles)
+Options.ParticleSpeed:OnChanged(UpdateParticles)
+Options.ParticleLifetime:OnChanged(UpdateParticles)
+
+Toggles.XRay:OnChanged(function()
+    if Toggles.XRay.Value then
+        EnableXRay()
+    else
+        DisableXRay()
+    end
+end)
+
+Options.XRayTransparency:OnChanged(function()
+    if Toggles.XRay.Value then
+        EnableXRay()
+    end
+end)
+
+Options.GraphicsPreset:OnChanged(ApplyGraphics)
+
+Toggles.FPSBoost:OnChanged(function()
+    if Toggles.FPSBoost.Value then
+        EnableFPS()
+    else
+        DisableFPS()
+    end
+end)
+
+Options.FPSMode:OnChanged(function()
+    if Toggles.FPSBoost.Value then
+        DisableFPS()
+        EnableFPS()
+    end
+end)
+
+Toggles.SpeedHack:OnChanged(function()
+    if not Toggles.SpeedHack.Value then
+        local hum = GetHumanoid()
+
+        if hum then
+            hum.WalkSpeed = MovementDefaults.WalkSpeed
+        end
+    end
+end)
+
+Toggles.JumpHack:OnChanged(function()
+    if not Toggles.JumpHack.Value then
+        local hum = GetHumanoid()
+
+        if hum then
+            hum.JumpPower = MovementDefaults.JumpPower
+            hum.JumpHeight = MovementDefaults.JumpHeight
+            hum.UseJumpPower = MovementDefaults.UseJumpPower
+        end
+    end
+end)
+
+Toggles.BunnyHop:OnChanged(function()
+    if not Toggles.BunnyHop.Value then
+        BHopSpeed = 0
+        JumpLatch = false
+    end
+end)
+
+Toggles.Fly:OnChanged(function()
+    if not Toggles.Fly.Value then
+        local root = GetRoot()
+
+        if root then
+            root.AssemblyLinearVelocity = Vector3.zero
+        end
+    end
+end)
+
+Toggles.MusicEnabled:OnChanged(function()
+    if not Toggles.MusicEnabled.Value then
+        MusicWasPlayingBeforeDisable = MusicSound.IsPlaying
+
+        if MusicSound.IsPlaying then
+            MusicSound:Pause()
+        end
+
+        return
+    end
+
+    local roundMode =
+        Toggles.RoundMusic
+        and Toggles.RoundMusic.Value
+
+    -- Round mode ON: only play while the detector says the round is active.
+    if roundMode and not RoundActive then
+        return
+    end
+
+    -- Normal mode (Round Music OFF) behaves like a regular always-available player.
+    if CurrentTrack <= 0 then
+        if #Playlist > 0 then
+            PlayTrack(1)
+        end
+    else
+        local ok = pcall(function()
+            MusicSound:Resume()
+        end)
+
+        if not ok then
+            MusicSound:Play()
+        end
+    end
+end)
+
+Toggles.ShowMusicHUD:OnChanged(function()
+    MusicGui.Enabled = true
+    MusicOuter.Visible = Toggles.ShowMusicHUD.Value
+    MusicFrame.Visible = true
+end)
+
+Toggles.MusicLoop:OnChanged(function()
+    MusicSound.Looped = Toggles.MusicLoop.Value
+    RefreshMusicHUD()
+end)
+
+Toggles.RoundMusic:OnChanged(function()
+    UpdateRoundHUD()
+
+    if Toggles.RoundMusic.Value then
+        -- Auto-round mode enabled.
+        EnsureRoundTimer()
+
+        if RoundActive then
+            if Toggles.MusicEnabled.Value then
+                if CurrentTrack <= 0 and #Playlist > 0 then
+                    PlayTrack(1)
+                elseif CurrentTrack > 0 and not MusicSound.IsPlaying then
+                    local ok = pcall(function()
+                        MusicSound:Resume()
+                    end)
+
+                    if not ok then
+                        MusicSound:Play()
+                    end
+                end
+            end
+        elseif MusicSound.IsPlaying then
+            MusicSound:Pause()
+        end
+
+        return
+    end
+
+    -- Auto-round mode disabled: immediately return to a normal player.
+    -- Nothing watches the round state for playback anymore.
+    if Toggles.MusicEnabled.Value then
+        if CurrentTrack <= 0 then
+            if #Playlist > 0 then
+                PlayTrack(1)
+            end
+        elseif not MusicSound.IsPlaying then
+            local ok = pcall(function()
+                MusicSound:Resume()
+            end)
+
+            if not ok then
+                MusicSound:Play()
+            end
+        end
+    end
+end)
+
+Options.MusicVolume:OnChanged(function()
+    MusicSound.Volume = Options.MusicVolume.Value
+end)
+
+--========================================================
+-- PLAYER CONNECTIONS
+--========================================================
+
+local function SetupPlayer(player)
+    if player == LP then
+        return
+    end
+
+    LoadFriend(player)
+
+    player.CharacterAdded:Connect(function()
+        task.wait(0.15)
+
+        if CurrentTarget == player then
+            CurrentTarget = nil
+        end
+    end)
+end
+
+for _, player in ipairs(Players:GetPlayers()) do
+    SetupPlayer(player)
+end
+
+Connections.PlayerAdded =
+    Players.PlayerAdded:Connect(SetupPlayer)
+
+Connections.PlayerRemoving =
+    Players.PlayerRemoving:Connect(function(player)
+        DestroyESP(player)
+
+        if Highlights[player] then
+            Highlights[player]:Destroy()
+            Highlights[player] = nil
+        end
+
+        FriendCache[player.UserId] = nil
+
+        if CurrentTarget == player then
+            CurrentTarget = nil
+        end
