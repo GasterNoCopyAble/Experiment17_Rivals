@@ -23,31 +23,10 @@ jobs:
           from pathlib import Path
           p = Path('src/Music.lua')
           s = p.read_text(encoding='utf-8')
-          bad = '''    local report = {
-              makefolder = false,
-              writefile = false,
-              isfile = false,
-              listfiles = false,
-              getcustomasset = false,
-              listedCount = 0,
-              error = nil
-          }
-          }
-
-          local probeFolder = "Experiment17_FS_TEST"'''
-          good = '''    local report = {
-              makefolder = false,
-              writefile = false,
-              isfile = false,
-              listfiles = false,
-              getcustomasset = false,
-              listedCount = 0,
-              error = nil
-          }
-
-          local probeFolder = "Experiment17_FS_TEST"'''
+          bad = '        error = nil\n    }\n    }\n\n    local probeFolder = "Experiment17_FS_TEST"'
+          good = '        error = nil\n    }\n\n    local probeFolder = "Experiment17_FS_TEST"'
           if bad not in s:
-              raise SystemExit('expected duplicated closer pattern not found')
+              raise SystemExit('duplicated closer sequence not found')
           s = s.replace(bad, good, 1)
           p.write_text(s, encoding='utf-8')
           PY
