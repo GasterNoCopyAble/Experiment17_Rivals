@@ -1,0 +1,180 @@
+function CR4.RunDebugLoadstring(Index)
+    local URL = DEBUG_LOADSTRING_URLS[Index]
+    if type(URL) ~= "string" or URL == "" then CR4.Notify("Debug URL slot " .. Index .. " is empty", 3); return end
+    local Success, Result = pcall(function() return loadstring(game:HttpGet(URL))() end)
+    if not Success then CR4.Notify("Loadstring error: " .. tostring(Result), 5) end
+end
+
+for Index = 1, 4 do
+    local I = Index
+    DebugLoadstringsGroup:AddButton({ Text = "Run Loadstring " .. I, Func = function() CR4.RunDebugLoadstring(I) end, DoubleClick = true })
+end
+
+DebugToolsGroup:AddButton({
+    Text = "Full Rescan",
+    Func = function()
+        task.spawn(CR4.ScanPrompts, CurrentRooms)
+        CR4.ScanESP()
+        RefreshXRay()
+        CR4.ScanVisualObjectsAsync()
+        CR4.BuildTextureTargetList()
+    end,
+    DoubleClick = false,
+})
+DebugToolsGroup:AddButton({
+    Text = "Restore World Values",
+    Func = function()
+        CR4.RestorePrompts()
+        CR4.RestoreXRay()
+        CR4.RestoreVisuals()
+        CR4.RestoreWalkSpeed()
+        CR4.RestoreJumpSettings()
+        CR4.RestoreAllTextures()
+    end,
+    DoubleClick = true,
+})
+DebugToolsGroup:AddButton({ Text = "Unload", Func = function() Library:Unload() end, DoubleClick = true })
+
+end
+--==================================================
+-- GUI: SETTINGS (Legacy v22 native Settings tab)
+--==================================================
+do
+
+local MenuGroup = Tabs["UI Settings"]:AddLeftGroupbox("Experiment 17")
+local SoundGroup = Tabs["UI Settings"]:AddRightGroupbox("Click Sound")
+
+-- These controls are compatibility shortcuts. Legacy v22 also exposes its own
+-- complete Interface / Mobile / Theme / Gradient / Config sections in Settings.
+MenuGroup:AddSlider("DPIScale", { Text = "DPI Scale", Default = State.DPIScale, Min = 50, Max = 175, Rounding = 0, Suffix = "%" })
+MenuGroup:AddToggle("FloatingGUIButton", { Text = "Floating GUI Button", Default = State.FloatingButtonVisible })
+MenuGroup:AddSlider("FloatingGUIButtonSize", { Text = "Floating Button Size", Default = State.FloatingButtonSize, Min = 36, Max = 96, Rounding = 0, Suffix = " px" })
+MenuGroup:AddButton({ Text = "Close / Open GUI", Func = function() Library:Toggle() end, DoubleClick = false })
+MenuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", { Default = "RightShift", NoUI = true, Text = "Menu keybind" })
+Library.ToggleKeybind = Options.MenuKeybind
+
+local ClickSlots = {}
+for Index = 1, 10 do table.insert(ClickSlots, "Sound " .. Index) end
+SoundGroup:AddToggle("ClickSounds", { Text = "Click Sounds", Default = State.ClickSounds })
+SoundGroup:AddDropdown("ClickSoundSlot", { Values = ClickSlots, Default = State.ClickSoundSlot, Multi = false, Text = "Sound Slot" })
+SoundGroup:AddSlider("ClickSoundVolume", { Text = "Volume", Default = State.ClickSoundVolume, Min = 0, Max = 1, Rounding = 2 })
+SoundGroup:AddButton({ Text = "Test Click Sound", Func = CR4.PlayClickSound, DoubleClick = false })
+
+end
+--==================================================
+-- CALLBACKS
+--==================================================
+
+function CR4.RefreshTrackedPrompts()
+    for Prompt in pairs(PromptRegistry) do
+        if Prompt and Prompt.Parent then CR4.UpdatePrompt(Prompt) end
+    end
+end
+
+Toggles.PromptExpander:OnChanged(function()
+    State.PromptExpander = Toggles.PromptExpander.Value
+    CR4.RefreshTrackedPrompts()
+end)
+
+Toggles.FastPrompts:OnChanged(function()
+    State.FastPrompts = Toggles.FastPrompts.Value
+    CR4.RefreshTrackedPrompts()
+end)
+
+Toggles.PromptThroughWalls:OnChanged(function()
+    State.PromptThroughWalls = Toggles.PromptThroughWalls.Value
+    CR4.RefreshTrackedPrompts()
+end)
+Toggles.RemovePaintingPrompts:OnChanged(function()
+    State.RemovePaintingPrompts = Toggles.RemovePaintingPrompts.Value
+    CR4.RefreshTrackedPrompts()
+end)
+
+local PromptSliderMap = {
+    PromptTimeDoor = "Door", PromptTimeHide = "Hide", PromptTimeGold = "Gold", PromptTimeKey = "Key",
+    PromptTimeLockpick = "Lockpick", PromptTimeItem = "Item", PromptTimeChest = "Chest",
+    PromptTimeDrawer = "Drawer", PromptTimeObjective = "Objective", PromptTimeOther = "Other",
+}
+for OptionName, Key in pairs(PromptSliderMap) do
+    Options[OptionName]:OnChanged(function()
+        PromptTimes[Key] = Options[OptionName].Value
+        if State.FastPrompts then CR4.RefreshTrackedPrompts() end
+    end)
+end
+
+Toggles.ESPNames:OnChanged(function() State.ESPNames = Toggles.ESPNames.Value end)
+Toggles.ESPDistance:OnChanged(function() State.ESPDistance = Toggles.ESPDistance.Value end)
+Options.TracerOrigin:OnChanged(function() State.TracerOrigin = Options.TracerOrigin.Value end)
+Options.ESPMaxDistance:OnChanged(function() State.ESPMaxDistance = Options.ESPMaxDistance.Value end)
+Options.ESPThickness:OnChanged(function() State.ESPThickness = Options.ESPThickness.Value end)
+Options.ESPVerticalOffset:OnChanged(function() State.ESPVerticalOffset = Options.ESPVerticalOffset.Value end)
+Options.ESPFPS:OnChanged(function() State.ESPFPS = Options.ESPFPS.Value end)
+Options.ESPFillTransparency:OnChanged(function()
+    State.ESPFillTransparency = math.clamp(Options.ESPFillTransparency.Value / 100, 0, 1)
+    CR4.RefreshESPEntries()
+end)
+
+Toggles.XRay:OnChanged(function()
+    State.XRay = Toggles.XRay.Value
+    RefreshXRay()
+end)
+Options.XRayMode:OnChanged(function() State.XRayMode = Options.XRayMode.Value; RefreshXRay() end)
+Options.XRayTransparency:OnChanged(function()
+    State.XRayTransparency = math.clamp(Options.XRayTransparency.Value / 100, 0, 1)
+    RefreshXRay()
+end)
+
+Toggles.LowGFX:OnChanged(function()
+    State.LowGFX = Toggles.LowGFX.Value
+    StyleDirty = true
+    if State.LowGFX then CR4.ApplyLowGFXGlobal() else CR4.RestoreLowGFX() end
+    CR4.EnforceVisualState()
+end)
+Toggles.Fullbright:OnChanged(function()
+    State.Fullbright = Toggles.Fullbright.Value
+    StyleDirty = true
+    if not State.Fullbright and State.VisualStyle == "Off" then
+        Lighting.Brightness = OriginalLighting.Brightness
+        Lighting.Ambient = OriginalLighting.Ambient
+        Lighting.OutdoorAmbient = OriginalLighting.OutdoorAmbient
+        Lighting.ClockTime = OriginalLighting.ClockTime
+        Lighting.ExposureCompensation = OriginalLighting.ExposureCompensation
+    end
+    CR4.EnforceVisualState()
+end)
+Toggles.NoFog:OnChanged(function()
+    State.NoFog = Toggles.NoFog.Value
+    StyleDirty = true
+    if not State.NoFog then
+        Lighting.FogStart = OriginalLighting.FogStart
+        Lighting.FogEnd = OriginalLighting.FogEnd
+        CR4.RestoreAtmosphere()
+    end
+    CR4.EnforceVisualState()
+end)
+Toggles.NoPostEffects:OnChanged(function()
+    State.NoPostEffects = Toggles.NoPostEffects.Value
+    StyleDirty = true
+    if not State.NoPostEffects and not State.LowGFX then CR4.RestorePostEffects() end
+    CR4.EnforceVisualState()
+end)
+Toggles.NoShadows:OnChanged(function()
+    State.NoShadows = Toggles.NoShadows.Value
+    if State.NoShadows then CR4.ScanVisualObjectsAsync() else CR4.RestoreShadows() end
+    CR4.EnforceVisualState()
+end)
+Options.VisualStyle:OnChanged(function()
+    State.VisualStyle = Options.VisualStyle.Value
+    StyleDirty = true
+    if State.VisualStyle == "Off" then CR4.ClearStyleEffects() end
+    CR4.EnforceVisualState()
+end)
+
+Toggles.SmartPath:OnChanged(function()
+    State.SmartPath = Toggles.SmartPath.Value
+    if State.SmartPath then CR4.UpdateSmartPath(true) else CR4.ClearPathVisual() end
+end)
+Options.PathTargetMode:OnChanged(function() State.PathTargetMode = Options.PathTargetMode.Value; if State.SmartPath then CR4.UpdateSmartPath(true) end end)
+Options.PathRecompute:OnChanged(function() State.PathRecompute = Options.PathRecompute.Value end)
+Options.PathMaxDistance:OnChanged(function() State.PathMaxDistance = Options.PathMaxDistance.Value; if State.SmartPath then CR4.UpdateSmartPath(true) end end)
+Options.PathColor:OnChanged(function()
