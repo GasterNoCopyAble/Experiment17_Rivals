@@ -1,4 +1,3 @@
-\
 -- Experiment 17 | Rivals
 -- Physical logical module loader. Each feature is compiled separately.
 
