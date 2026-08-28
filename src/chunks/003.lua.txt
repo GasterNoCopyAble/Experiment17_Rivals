@@ -1,0 +1,180 @@
+        pcall(function()
+            NativeLibrary:TryAutoload()
+        end)
+    end
+    task.defer(function()
+        syncCompatControls(true)
+    end)
+end
+
+--==================================================
+-- SERVICES / OBJECTS
+--==================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Lighting = game:GetService("Lighting")
+local SoundService = game:GetService("SoundService")
+local PathfindingService = game:GetService("PathfindingService")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+local CurrentRooms = workspace:FindFirstChild("CurrentRooms")
+    or workspace:WaitForChild("CurrentRooms", 30)
+local Terrain = workspace:FindFirstChildOfClass("Terrain")
+
+if not CurrentRooms then
+    error("CurrentRooms was not found")
+end
+
+local IsMobile = UserInputService.TouchEnabled
+local IsUnloading = false
+local CR4 = {}
+
+-- Forward declarations used by functions defined before their implementation.
+local PathFolder
+local AntiScreechBusy = false
+
+--==================================================
+-- HELPERS / CLEANUP
+--==================================================
+
+local ScriptConnections = {}
+
+function CR4.TrackConnection(Connection)
+    table.insert(ScriptConnections, Connection)
+    return Connection
+end
+
+function CR4.DisconnectConnection(Connection)
+    if Connection then
+        pcall(function()
+            Connection:Disconnect()
+        end)
+    end
+end
+
+function CR4.DisconnectAllConnections()
+    for Index = #ScriptConnections, 1, -1 do
+        CR4.DisconnectConnection(table.remove(ScriptConnections, Index))
+    end
+end
+
+function CR4.SafeDestroy(Object)
+    if Object then
+        pcall(function()
+            Object:Destroy()
+        end)
+    end
+end
+
+function CR4.Notify(Text, Time)
+    pcall(function()
+        Library:Notify(Text, Time or 3)
+    end)
+end
+
+function CR4.GetCharacter()
+    local Character = LocalPlayer.Character
+
+    if not Character then
+        return nil, nil, nil
+    end
+
+    return Character,
+        Character:FindFirstChildOfClass("Humanoid"),
+        Character:FindFirstChild("HumanoidRootPart")
+end
+
+function CR4.HasAncestorNamed(Object, Name, StopAt)
+    local Current = Object
+
+    while Current and Current ~= StopAt do
+        if Current.Name == Name then
+            return true, Current
+        end
+
+        Current = Current.Parent
+    end
+
+    return false, nil
+end
+
+function CR4.FindAncestorFromSet(Object, NameSet, StopAt)
+    local Current = Object
+
+    while Current and Current ~= StopAt do
+        if NameSet[Current.Name] then
+            return Current
+        end
+
+        Current = Current.Parent
+    end
+
+    return nil
+end
+
+function CR4.IsSpatialTarget(Object)
+    return Object and (Object:IsA("Model") or Object:IsA("BasePart"))
+end
+
+function CR4.GetWorldPosition(Object)
+    if not Object or not Object.Parent then
+        return nil
+    end
+
+    if Object:IsA("BasePart") then
+        return Object.Position
+    end
+
+    if Object:IsA("Model") then
+        local Success, Pivot = pcall(function()
+            return Object:GetPivot()
+        end)
+
+        if Success then
+            return Pivot.Position
+        end
+    end
+
+    local Part = Object:FindFirstChildWhichIsA("BasePart", true)
+    return Part and Part.Position or nil
+end
+
+function CR4.GetNearestSpatialDescendant(Object)
+    if CR4.IsSpatialTarget(Object) then
+        return Object
+    end
+
+    if not Object then
+        return nil
+    end
+
+    local Model = Object:FindFirstChildWhichIsA("Model", true)
+    if Model then
+        return Model
+    end
+
+    return Object:FindFirstChildWhichIsA("BasePart", true)
+end
+
+--==================================================
+-- STATE
+--==================================================
+
+local State = {
+    PromptExpander = false,
+    FastPrompts = false,
+    PromptThroughWalls = false,
+
+    ESPNames = false,
+    ESPDistance = false,
+    ESPMaxDistance = 1200,
+    ESPThickness = 1,
+    ESPVerticalOffset = -8,
+    TracerOrigin = "Bottom",
+    ESPFillTransparency = 0.55,
+    ESPFPS = 30,
+
