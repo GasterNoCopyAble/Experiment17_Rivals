@@ -1,0 +1,697 @@
+-- BUILD-ID: E17-20260816-1942-FS-SELFTEST
+-- VERIFY: FILESYSTEM SELF TEST BUTTON
+-- VERIFY: LOCAL TRACK PATH FALLBACK
+-- VERIFY: SINGLE-LINE LISTFILES ERROR OUTPUT
+
+-- BUILD-ID: E17-20260816-1935-RAW-PATH-SCANNER
+-- VERIFY: RAW LISTFILES PATHS ARE PRESERVED
+-- VERIFY: FALLBACK WORKSPACE ROOT SCAN
+-- VERIFY: DEBUG MUSIC FOLDER BUTTON
+
+-- BUILD-ID: E17-20260816-1924-MUSIC-FOLDER-FIX
+-- VERIFY: LOCAL MUSIC SCANNER V2
+-- VERIFY: DISCOVERY DOES NOT REQUIRE GETCUSTOMASSET
+
+-- BUILD-ID: E17-20260816-1917
+-- VERIFY: MUSIC HUD - LINORIA WINDOW STYLE
+-- VERIFY: Auto Music With Rounds
+-- VERIFY: ROUND SYNC: OFF | manual / continuous
+
+--[[========================================================
+    EXPERIMENT 17
+    Local Linoria challenge script
+
+    RightShift = menu
+    Q          = aimbot
+    F          = fly
+    M          = music enable / disable
+
+    Main additions:
+      - Fixed RunService syntax
+      - Strict Player.Team aim filtering + Team ESP
+      - Expanded ESP
+      - Spherical player particles (Surface / Volume)
+      - Coordinate third person, rotate while holding RMB
+      - WalkSpeed / JumpPower fixes
+      - BunnyHop acceleration that resets when movement stops
+      - Auto Strafe restored
+      - Fly
+      - Gaze dodge
+      - Anti Aim
+      - X-Ray / graphics presets / FPS boost
+      - Music tab + on-screen playlist HUD
+      - Asset ID tracks + local getcustomasset folder tracks
+      - Play/Pause, Prev, Next, Loop, Delete
+      - Seekable progress bar + elapsed / remaining time
+      - Playlist persistence when file API is available
+==========================================================]]
+
+--========================================================
+-- SERVICES
+--========================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local Lighting = game:GetService("Lighting")
+local SoundService = game:GetService("SoundService")
+local HttpService = game:GetService("HttpService")
+
+local LP = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+--========================================================
+-- LINORIA
+--========================================================
+
+local Repo = "https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/main/"
+
+local Library = loadstring(game:HttpGet(Repo .. "Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet(Repo .. "addons/ThemeManager.lua"))()
+local SaveManager = loadstring(game:HttpGet(Repo .. "addons/SaveManager.lua"))()
+
+local Window = Library:CreateWindow({
+    Title = "Experiment 17",
+    Center = true,
+    AutoShow = true,
+    TabPadding = 8,
+    MenuFadeTime = 0.2
+})
+
+local Env = getgenv and getgenv() or _G
+local Toggles = Env.Toggles
+local Options = Env.Options
+
+--========================================================
+-- TABS
+--========================================================
+
+local Tabs = {
+    Combat = Window:AddTab("Combat"),
+    Visuals = Window:AddTab("Visuals"),
+    Player = Window:AddTab("Player"),
+    Music = Window:AddTab("Music"),
+    Settings = Window:AddTab("Settings")
+}
+
+--========================================================
+-- GENERAL STATE
+--========================================================
+
+local Connections = {}
+local Unloaded = false
+
+local CurrentTarget = nil
+local FriendCache = {}
+
+local ESPObjects = {}
+local Highlights = {}
+
+local BHopSpeed = 0
+local JumpLatch = false
+
+local DodgeSide = 1
+local LastDodge = 0
+
+local AntiAimAngle = 0
+local AntiAimTimer = 0
+
+local ThirdYaw = 0
+local ThirdPitch = math.rad(-10)
+local ThirdDragging = false
+
+local ParticleSphere = nil
+local ParticleEmitter = nil
+
+local XRayCache = {}
+local FPSCache = {}
+local VisualEffects = {}
+
+--========================================================
+-- FILE API
+--========================================================
+
+local FileAPI =
+    type(writefile) == "function"
+    and type(readfile) == "function"
+    and type(isfile) == "function"
+    and type(isfolder) == "function"
+    and type(makefolder) == "function"
+    and type(listfiles) == "function"
+
+local CustomAsset =
+    (type(getcustomasset) == "function" and getcustomasset)
+    or (type(getsynasset) == "function" and getsynasset)
+    or nil
+
+local RootFolder = "Experiment17"
+local PlaylistFile = RootFolder .. "/music_playlist.json"
+
+if FileAPI and not isfolder(RootFolder) then
+    pcall(makefolder, RootFolder)
+end
+
+--========================================================
+-- ORIGINAL SETTINGS
+--========================================================
+
+local MovementDefaults = {
+    WalkSpeed = 16,
+    JumpPower = 50,
+    JumpHeight = 7.2,
+    UseJumpPower = true
+}
+
+local OriginalCamera = {
+    Type = Camera.CameraType,
+    Subject = Camera.CameraSubject,
+    MinZoom = LP.CameraMinZoomDistance,
+    MaxZoom = LP.CameraMaxZoomDistance,
+    Mode = LP.CameraMode
+}
+
+local OriginalLighting = {
+    Brightness = Lighting.Brightness,
+    ClockTime = Lighting.ClockTime,
+    Exposure = Lighting.ExposureCompensation,
+    Ambient = Lighting.Ambient,
+    OutdoorAmbient = Lighting.OutdoorAmbient,
+    FogColor = Lighting.FogColor,
+    FogStart = Lighting.FogStart,
+    FogEnd = Lighting.FogEnd,
+    Shadows = Lighting.GlobalShadows,
+    ShadowSoftness = Lighting.ShadowSoftness
+}
+
+--========================================================
+-- CHARACTER HELPERS
+--========================================================
+
+local function GetCharacter()
+    return LP.Character
+end
+
+local function GetHumanoid()
+    local char = GetCharacter()
+    return char and char:FindFirstChildOfClass("Humanoid")
+end
+
+local function GetRoot()
+    local char = GetCharacter()
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function GetNeck()
+    local char = GetCharacter()
+
+    if not char then
+        return nil
+    end
+
+    return char:FindFirstChild("Neck", true)
+end
+
+local function SaveMovementDefaults()
+    local hum = GetHumanoid()
+
+    if not hum then
+        return
+    end
+
+    MovementDefaults.WalkSpeed = hum.WalkSpeed
+    MovementDefaults.JumpPower = hum.JumpPower
+    MovementDefaults.JumpHeight = hum.JumpHeight
+    MovementDefaults.UseJumpPower = hum.UseJumpPower
+end
+
+local function RestoreMovement()
+    local hum = GetHumanoid()
+
+    if not hum then
+        return
+    end
+
+    hum.WalkSpeed = MovementDefaults.WalkSpeed
+    hum.JumpPower = MovementDefaults.JumpPower
+    hum.JumpHeight = MovementDefaults.JumpHeight
+    hum.UseJumpPower = MovementDefaults.UseJumpPower
+    hum.AutoRotate = true
+end
+
+local function Alive(player)
+    local char = player.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+
+    return hum and hum.Health > 0
+end
+
+if LP.Character then
+    task.defer(SaveMovementDefaults)
+end
+
+--========================================================
+-- TEAM / FRIEND
+--========================================================
+
+local function IsTeammate(player)
+    if not player or player == LP then
+        return false
+    end
+
+    if LP.Team == nil or player.Team == nil then
+        return false
+    end
+
+    return LP.Team == player.Team
+end
+
+local function LoadFriend(player)
+    if player == LP then
+        return
+    end
+
+    FriendCache[player.UserId] = nil
+
+    task.spawn(function()
+        local ok, result = pcall(function()
+            return LP:IsFriendsWith(player.UserId)
+        end)
+
+        if ok then
+            FriendCache[player.UserId] = result == true
+        else
+            -- Do not target while relationship is unknown.
+            FriendCache[player.UserId] = true
+        end
+    end)
+end
+
+local function IsFriend(player)
+    local value = FriendCache[player.UserId]
+
+    if value == nil then
+        return true
+    end
+
+    return value
+end
+
+--========================================================
+-- DISTANCE / VISIBILITY
+--========================================================
+
+local function GetDistance(player)
+    local myRoot = GetRoot()
+    local targetRoot =
+        player.Character
+        and player.Character:FindFirstChild("HumanoidRootPart")
+
+    if not myRoot or not targetRoot then
+        return math.huge
+    end
+
+    return (targetRoot.Position - myRoot.Position).Magnitude
+end
+
+local function RayVisible(player, part)
+    local char = GetCharacter()
+
+    if not char then
+        return false
+    end
+
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = {char}
+    params.IgnoreWater = true
+
+    local origin = Camera.CFrame.Position
+    local result = Workspace:Raycast(
+        origin,
+        part.Position - origin,
+        params
+    )
+
+    if not result then
+        return true
+    end
+
+    return result.Instance:IsDescendantOf(player.Character)
+end
+
+--========================================================
+-- AIMBOT
+--========================================================
+
+local function GetAimPart(player)
+    local char = player.Character
+
+    if not char then
+        return nil
+    end
+
+    local selected = Options.AimPart and Options.AimPart.Value or "Head"
+
+    return char:FindFirstChild(selected)
+        or char:FindFirstChild("Head")
+        or char:FindFirstChild("UpperTorso")
+        or char:FindFirstChild("Torso")
+        or char:FindFirstChild("HumanoidRootPart")
+end
+
+local function ValidTarget(player, locked)
+    if player == LP or not Alive(player) then
+        return false
+    end
+
+    if Toggles.TeamCheck.Value and IsTeammate(player) then
+        return false
+    end
+
+    if Toggles.IgnoreFriends.Value and IsFriend(player) then
+        return false
+    end
+
+    if GetDistance(player) > Options.MaxAimDistance.Value then
+        return false
+    end
+
+    local part = GetAimPart(player)
+
+    if not part then
+        return false
+    end
+
+    local screen, onScreen = Camera:WorldToViewportPoint(part.Position)
+
+    if not onScreen or screen.Z <= 0 then
+        return false
+    end
+
+    local center = Camera.ViewportSize / 2
+    local screenDistance = (
+        Vector2.new(screen.X, screen.Y)
+        - center
+    ).Magnitude
+
+    if Toggles.UseFOV.Value then
+        local allowed = Options.AimFOV.Value
+
+        if locked then
+            allowed *= 1.4
+        end
+
+        if screenDistance > allowed then
+            return false
+        end
+    end
+
+    if Toggles.WallCheck.Value and not RayVisible(player, part) then
+        return false
+    end
+
+    return true, screenDistance
+end
+
+local function FindTarget()
+    local best = nil
+    local bestDistance = math.huge
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LP then
+            local valid, distance = ValidTarget(player, false)
+
+            if valid and distance < bestDistance then
+                best = player
+                bestDistance = distance
+            end
+        end
+    end
+
+    return best
+end
+
+--========================================================
+-- FOV GUI
+--========================================================
+
+local FOVGui = Instance.new("ScreenGui")
+FOVGui.Name = "Experiment17FOV"
+FOVGui.ResetOnSpawn = false
+FOVGui.IgnoreGuiInset = true
+FOVGui.Parent = LP:WaitForChild("PlayerGui")
+
+local FOVCircle = Instance.new("Frame")
+FOVCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+FOVCircle.BackgroundTransparency = 1
+FOVCircle.Visible = false
+FOVCircle.Parent = FOVGui
+
+local FOVCorner = Instance.new("UICorner")
+FOVCorner.CornerRadius = UDim.new(1, 0)
+FOVCorner.Parent = FOVCircle
+
+local FOVStroke = Instance.new("UIStroke")
+FOVStroke.Thickness = 1
+FOVStroke.Parent = FOVCircle
+
+--========================================================
+-- ESP GUI
+--========================================================
+
+local ESPGui = Instance.new("ScreenGui")
+ESPGui.Name = "Experiment17ESP"
+ESPGui.IgnoreGuiInset = true
+ESPGui.ResetOnSpawn = false
+ESPGui.Parent = LP:WaitForChild("PlayerGui")
+
+local function NewLine(parent)
+    local line = Instance.new("Frame")
+    line.AnchorPoint = Vector2.new(0.5, 0.5)
+    line.BorderSizePixel = 0
+    line.Visible = false
+    line.Parent = parent
+    return line
+end
+
+local function DrawLine(frame, a, b, thickness)
+    local delta = b - a
+    local center = (a + b) / 2
+
+    frame.Position = UDim2.fromOffset(center.X, center.Y)
+    frame.Size = UDim2.fromOffset(delta.Magnitude, thickness)
+    frame.Rotation = math.deg(math.atan2(delta.Y, delta.X))
+end
+
+local function CreateESP(player)
+    if ESPObjects[player] then
+        return ESPObjects[player]
+    end
+
+    local box = Instance.new("Frame")
+    box.BackgroundTransparency = 1
+    box.BorderSizePixel = 0
+    box.Visible = false
+    box.Parent = ESPGui
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 2
+    stroke.Parent = box
+
+    local corner = Instance.new("UICorner")
+    corner.Parent = box
+
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.fromScale(1, 1)
+    fill.BorderSizePixel = 0
+    fill.BackgroundTransparency = 1
+    fill.Parent = box
+
+    local fillCorner = Instance.new("UICorner")
+    fillCorner.Parent = fill
+
+    local info = Instance.new("TextLabel")
+    info.AnchorPoint = Vector2.new(0.5, 0)
+    info.Size = UDim2.fromOffset(360, 20)
+    info.BackgroundTransparency = 1
+    info.TextStrokeTransparency = 0
+    info.TextColor3 = Color3.new(1, 1, 1)
+    info.Font = Enum.Font.Code
+    info.TextSize = 14
+    info.Visible = false
+    info.Parent = ESPGui
+
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.AnchorPoint = Vector2.new(0.5, 1)
+    nameLabel.Size = UDim2.fromOffset(300, 20)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.TextStrokeTransparency = 0
+    nameLabel.TextColor3 = Color3.new(1, 1, 1)
+    nameLabel.Font = Enum.Font.Code
+    nameLabel.TextSize = 14
+    nameLabel.Visible = false
+    nameLabel.Parent = ESPGui
+
+    local tracer = NewLine(ESPGui)
+
+    local hpBack = Instance.new("Frame")
+    hpBack.BorderSizePixel = 0
+    hpBack.BackgroundColor3 = Color3.new(0, 0, 0)
+    hpBack.Visible = false
+    hpBack.Parent = ESPGui
+
+    local hpFill = Instance.new("Frame")
+    hpFill.AnchorPoint = Vector2.new(0, 1)
+    hpFill.BorderSizePixel = 0
+    hpFill.BackgroundColor3 = Color3.new(0, 1, 0)
+    hpFill.Parent = hpBack
+
+    ESPObjects[player] = {
+        Box = box,
+        Stroke = stroke,
+        Corner = corner,
+        Fill = fill,
+        FillCorner = fillCorner,
+        Info = info,
+        Name = nameLabel,
+        Tracer = tracer,
+        HPBack = hpBack,
+        HPFill = hpFill
+    }
+
+    return ESPObjects[player]
+end
+
+local function DestroyESP(player)
+    local object = ESPObjects[player]
+
+    if not object then
+        return
+    end
+
+    for _, instance in pairs(object) do
+        if typeof(instance) == "Instance" then
+            instance:Destroy()
+        end
+    end
+
+    ESPObjects[player] = nil
+end
+
+local function CharacterBox(character)
+    local cf, size = character:GetBoundingBox()
+    local half = size / 2
+
+    local minX = math.huge
+    local minY = math.huge
+    local maxX = -math.huge
+    local maxY = -math.huge
+    local found = false
+
+    for x = -1, 1, 2 do
+        for y = -1, 1, 2 do
+            for z = -1, 1, 2 do
+                local point = cf:PointToWorldSpace(
+                    Vector3.new(
+                        half.X * x,
+                        half.Y * y,
+                        half.Z * z
+                    )
+                )
+
+                local screen = Camera:WorldToViewportPoint(point)
+
+                if screen.Z > 0 then
+                    found = true
+                    minX = math.min(minX, screen.X)
+                    minY = math.min(minY, screen.Y)
+                    maxX = math.max(maxX, screen.X)
+                    maxY = math.max(maxY, screen.Y)
+                end
+            end
+        end
+    end
+
+    if not found then
+        return nil
+    end
+
+    return Vector2.new(minX, minY), Vector2.new(maxX, maxY)
+end
+
+local function GetHighlight(player)
+    local highlight = Highlights[player]
+
+    if highlight and highlight.Parent == player.Character then
+        return highlight
+    end
+
+    if highlight then
+        highlight:Destroy()
+    end
+
+    if not player.Character then
+        return nil
+    end
+
+    highlight = Instance.new("Highlight")
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Adornee = player.Character
+    highlight.Parent = player.Character
+
+    Highlights[player] = highlight
+    return highlight
+end
+
+--========================================================
+-- SPHERICAL PARTICLES
+--========================================================
+
+local ParticleTextures = {
+    Sparkles = "rbxasset://textures/particles/sparkles_main.dds",
+    Smoke = "rbxasset://textures/particles/smoke_main.dds",
+    Soft = "rbxasset://textures/particles/sparkles_main.dds",
+    Fireflies = "rbxasset://textures/particles/sparkles_main.dds"
+}
+
+local function DestroyParticles()
+    ParticleEmitter = nil
+
+    if ParticleSphere then
+        ParticleSphere:Destroy()
+        ParticleSphere = nil
+    end
+end
+
+local function UpdateParticles()
+    if not Toggles.Particles.Value then
+        DestroyParticles()
+        return
+    end
+
+    local root = GetRoot()
+
+    if not root then
+        return
+    end
+
+    if not ParticleSphere or not ParticleSphere.Parent then
+        DestroyParticles()
+
+        ParticleSphere = Instance.new("Part")
+        ParticleSphere.Name = "Experiment17ParticleSphere"
+        ParticleSphere.Shape = Enum.PartType.Ball
+        ParticleSphere.Transparency = 1
+        ParticleSphere.CanCollide = false
+        ParticleSphere.CanTouch = false
+        ParticleSphere.CanQuery = false
+        ParticleSphere.Massless = true
+        ParticleSphere.CFrame = root.CFrame
+        ParticleSphere.Parent = Workspace
+
+        local weld = Instance.new("WeldConstraint")
+        weld.Part0 = ParticleSphere
+        weld.Part1 = root
+        weld.Parent = ParticleSphere
+
