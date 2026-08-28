@@ -348,7 +348,6 @@ function FilesystemSelfTest()
         listedCount = 0,
         error = nil
     }
-    }
 
     local probeFolder = "Experiment17_FS_TEST"
     local probeFile = probeFolder .. "/probe.txt"
