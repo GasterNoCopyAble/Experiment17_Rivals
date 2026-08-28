@@ -1,3 +1,7 @@
+-- Experiment 17 | Rivals | Core.lua
+-- Physical logical module; compiled independently by Loader.lua.
+
+--========================================================
 -- SERVICES
 --========================================================
 
@@ -12,10 +16,6 @@ HttpService = game:GetService("HttpService")
 LP = Players.LocalPlayer
 Camera = Workspace.CurrentCamera
 
---========================================================
---========================================================
--- WINDOW
---========================================================
 
 Window = Library:CreateWindow({
     Title = "Experiment 17",
@@ -25,6 +25,7 @@ Window = Library:CreateWindow({
     MenuFadeTime = 0.2
 })
 
+--========================================================
 -- TABS
 --========================================================
 
@@ -280,5 +281,3 @@ function RayVisible(player, part)
 
     return result.Instance:IsDescendantOf(player.Character)
 end
-
---========================================================

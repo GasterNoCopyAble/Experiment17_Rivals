@@ -1,6 +1,6 @@
 # Experiment17_Rivals
 
-Experiment 17 using `Experiment17_GuiLib` Legacy v22.
+Actual Rivals build converted from the supplied E17-20260816-1942 script to `Experiment17_GuiLib` Legacy v22.
 
 ## Loader
 
@@ -8,20 +8,20 @@ Experiment 17 using `Experiment17_GuiLib` Legacy v22.
 loadstring(game:HttpGet("https://raw.githubusercontent.com/GasterNoCopyAble/Experiment17_Rivals/main/Loader.lua"))()
 ```
 
-## Physical logical modules
+## Logical modules
 
-- `src/Core.lua` — Legacy v22 bridge, services, common state and helpers
-- `src/Prompts.lua` — proximity prompts
-- `src/ESP.lua` — ESP, highlights, boxes and tracers
-- `src/XRay.lua` — X-Ray
-- `src/Visuals.lua` — lighting, graphics styles and Smart Path
-- `src/Player.lua` — speed, jump, fly, third person and spectate
-- `src/Automation.lua` — automatic pickup
-- `src/Protection.lua` — protections, anti-TP and Room 50
-- `src/Fun.lua` — textures, sounds and notifications
-- `src/World.lua` — room/world watchers and update loops
-- `src/UI.lua` — feature UI
-- `src/Callbacks.lua` — UI callbacks/state synchronization
-- `src/Startup.lua` — config startup, scans and unload cleanup
+- `src/UICompat.lua` — Legacy v22 compatibility surface
+- `src/Core.lua` — services, state, character/team helpers
+- `src/Combat.lua` — aimbot, FOV, gaze dodge, camera/anti-aim render
+- `src/ESP.lua` — ESP objects and update loop
+- `src/Visuals.lua` — particles, X-Ray, graphics presets, FPS boost
+- `src/Player.lua` — speed, jump, bunnyhop, strafe, fly
+- `src/Music.lua` — playlist, local tracks, HUD and round detector
+- `src/UI.lua` — all feature tabs/controls
+- `src/MusicRuntime.lua` — music update loop
+- `src/Callbacks.lua` — UI state callbacks
+- `src/Connections.lua` — player/respawn/world connections
+- `src/Config.lua` — config/autoload startup
+- `src/Unload.lua` — cleanup and watermark
 
-Every module contains its actual code and is downloaded/compiled separately inside one shared environment. The old monolithic `Out of local registers ... exceeded limit 200` problem is therefore not shared across the whole script.
+Each module is a separate Luau prototype; the old `exceeded limit 200` local-register problem is no longer shared across the whole script.

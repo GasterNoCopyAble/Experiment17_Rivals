@@ -1,27 +1,30 @@
 -- Experiment 17 | Rivals
--- Physical logical module loader. Each feature is compiled separately.
+-- Every logical module is downloaded and compiled separately, avoiding Luau's
+-- per-prototype local-register limit from the old 5,000+ line monolith.
 
 local BASE = "https://raw.githubusercontent.com/GasterNoCopyAble/Experiment17_Rivals/main/src/"
 local MODULES = {
+    "UICompat.lua",
     "Core.lua",
-    "Prompts.lua",
-    "ESP.lua",
-    "XRay.lua",
+    "Music.lua",
     "Visuals.lua",
-    "Player.lua",
-    "Automation.lua",
-    "Protection.lua",
-    "Fun.lua",
-    "World.lua",
     "UI.lua",
+    "Combat.lua",
+    "ESP.lua",
+    "Player.lua",
+    "MusicRuntime.lua",
     "Callbacks.lua",
-    "Startup.lua",
+    "Connections.lua",
+    "Config.lua",
+    "Unload.lua",
 }
 
 local baseEnv = (getgenv and getgenv()) or _G
 local previous = rawget(baseEnv, "__Experiment17RivalsContext")
 if previous and previous.Library and type(previous.Library.Unload) == "function" then
-    pcall(function() previous.Library:Unload() end)
+    pcall(function()
+        previous.Library:Unload()
+    end)
 end
 
 local canSetEnv = type(setfenv) == "function"
@@ -41,31 +44,31 @@ else
 end
 baseEnv.__Experiment17RivalsContext = Context
 
-local function loadModule(name)
-    local okHttp, body = pcall(game.HttpGet, game, BASE .. name)
+local function LoadModule(Name)
+    local okHttp, Source = pcall(game.HttpGet, game, BASE .. Name)
     if not okHttp then
-        error(("Experiment17_Rivals: failed to download %s: %s"):format(name, tostring(body)))
+        error(("Experiment17_Rivals: failed to download %s: %s"):format(Name, tostring(Source)))
     end
 
-    local chunk, compileError = loadstring(body)
-    if not chunk then
-        error(("Experiment17_Rivals: compile error in %s: %s"):format(name, tostring(compileError)))
+    local Chunk, CompileError = loadstring(Source)
+    if not Chunk then
+        error(("Experiment17_Rivals: compile error in %s: %s"):format(Name, tostring(CompileError)))
     end
 
     if canSetEnv then
-        setfenv(chunk, Context)
+        setfenv(Chunk, Context)
     end
 
-    local okRun, runtimeError = pcall(chunk)
+    local okRun, RuntimeError = pcall(Chunk)
     if not okRun then
-        error(("Experiment17_Rivals: runtime error in %s: %s"):format(name, tostring(runtimeError)))
+        error(("Experiment17_Rivals: runtime error in %s: %s"):format(Name, tostring(RuntimeError)))
     end
 
-    Context.__LoadedModules[#Context.__LoadedModules + 1] = name
+    Context.__LoadedModules[#Context.__LoadedModules + 1] = Name
 end
 
-for _, moduleName in ipairs(MODULES) do
-    loadModule(moduleName)
+for _, Name in ipairs(MODULES) do
+    LoadModule(Name)
 end
 
 return Context

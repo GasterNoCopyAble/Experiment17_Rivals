@@ -1,0 +1,935 @@
+-- Experiment 17 | Rivals | UICompat.lua
+-- Physical logical module; compiled independently by Loader.lua.
+
+--==================================================
+-- EXPERIMENT17 GUI LIB v22 / LINORIA COMPATIBILITY
+--==================================================
+--==================================================
+-- EXPERIMENT 17 GUI LIB v22 / LINORIA COMPAT BRIDGE
+-- Replace the old LINORIA block with this block.
+--==================================================
+
+NativeLibrary = loadstring(game:HttpGet(
+    "https://raw.githubusercontent.com/GasterNoCopyAble/Experiment17_GuiLib/main/Experiment17.lua"
+))()
+
+Environment = (getgenv and getgenv()) or _G
+Environment.Toggles = {}
+Environment.Options = {}
+
+Toggles = Environment.Toggles
+Options = Environment.Options
+
+Library = {}
+ThemeManager = {}
+SaveManager = {}
+
+Library.Native = NativeLibrary
+Library.ScreenGui = NativeLibrary.Root
+Library.OpenedFrames = {}
+if NativeLibrary.Main then
+    Library.OpenedFrames[NativeLibrary.Main] = true
+end
+
+CompatConnections = {}
+CompatControls = {}
+CompatKeybinds = {}
+UnloadCallbacks = {}
+CompatUnloading = false
+
+function trackCompat(Connection)
+    if Connection then
+        table.insert(CompatConnections, Connection)
+    end
+    return Connection
+end
+
+function safeCall(Function, ...)
+    if type(Function) ~= "function" then
+        return
+    end
+    local Ok, ErrorText = pcall(Function, ...)
+    if not Ok then
+        warn("[Experiment17 GUI Compat] callback error:", ErrorText)
+    end
+end
+
+function arrayToLinoriaMap(Value)
+    local Result = {}
+    if type(Value) ~= "table" then
+        return Result
+    end
+
+    for Key, Item in pairs(Value) do
+        if type(Key) == "number" then
+            Result[Item] = true
+        elseif Item == true then
+            Result[Key] = true
+        end
+    end
+
+    return Result
+end
+
+function linoriaMapToArray(Value)
+    if type(Value) ~= "table" then
+        return {}
+    end
+
+    local IsArray = #Value > 0
+    if IsArray then
+        local Copy = {}
+        for Index, Item in ipairs(Value) do
+            Copy[Index] = Item
+        end
+        return Copy
+    end
+
+    local Result = {}
+    for Key, Enabled in pairs(Value) do
+        if Enabled then
+            table.insert(Result, Key)
+        end
+    end
+    table.sort(Result, function(A, B)
+        return tostring(A) < tostring(B)
+    end)
+    return Result
+end
+
+function getNativeValue(Control)
+    if not Control or type(Control.Get) ~= "function" then
+        return nil
+    end
+
+    local Ok, Value = pcall(function()
+        return Control:Get()
+    end)
+    return Ok and Value or nil
+end
+
+function setNativeDPI(Value)
+    Value = tonumber(Value)
+    if not Value then
+        return
+    end
+
+    local Candidates = { 50, 75, 100, 125, 150, 175 }
+    local Best = Candidates[1]
+    local BestDistance = math.huge
+
+    for _, Candidate in ipairs(Candidates) do
+        local Distance = math.abs(Candidate - Value)
+        if Distance < BestDistance then
+            BestDistance = Distance
+            Best = Candidate
+        end
+    end
+
+    if NativeLibrary.Settings then
+        NativeLibrary.Settings.AutoFitDPI = false
+        NativeLibrary.Settings.DPIPreset = tostring(Best) .. "%"
+    end
+
+    if type(NativeLibrary.ApplyDPIScale) == "function" then
+        pcall(function()
+            NativeLibrary:ApplyDPIScale()
+        end)
+    end
+end
+
+function applyNativeSpecial(Id, Value)
+    if Id == "DPIScale" then
+        setNativeDPI(Value)
+
+    elseif Id == "FloatingGUIButton" then
+        if NativeLibrary.Settings then
+            NativeLibrary.Settings.MobileButtonEnabled = Value == true
+        end
+        if type(NativeLibrary.RefreshMobileButton) == "function" then
+            pcall(function()
+                NativeLibrary:RefreshMobileButton()
+            end)
+        end
+
+    elseif Id == "FloatingGUIButtonSize" then
+        if NativeLibrary.Settings then
+            NativeLibrary.Settings.MobileButtonSize = tonumber(Value) or NativeLibrary.Settings.MobileButtonSize
+        end
+        if type(NativeLibrary.RefreshMobileButton) == "function" then
+            pcall(function()
+                NativeLibrary:RefreshMobileButton()
+            end)
+        end
+
+    elseif Id == "MenuKeybind" then
+        local KeyName = Value
+        if typeof(Value) == "EnumItem" then
+            KeyName = Value.Name
+        end
+        KeyName = tostring(KeyName or "RightShift")
+        if Enum.KeyCode[KeyName] and NativeLibrary.Settings then
+            NativeLibrary.Settings.MenuKey = KeyName
+        end
+    end
+end
+
+CompatControl = {}
+CompatControl.__index = CompatControl
+
+function CompatControl:_fromNative(Value)
+    if self.Multi then
+        return arrayToLinoriaMap(Value)
+    end
+
+    if self.SpecialType == "Player" and (Value == nil or Value == "None") then
+        return nil
+    end
+
+    return Value
+end
+
+function CompatControl:_toNative(Value)
+    if self.Multi then
+        return linoriaMapToArray(Value)
+    end
+
+    if self.SpecialType == "Player" and Value == nil then
+        return "None"
+    end
+
+    if self.Kind == "Keybind" and typeof(Value) == "EnumItem" then
+        return Value.Name
+    end
+
+    return Value
+end
+
+function CompatControl:_emit(Value, Force)
+    Value = self:_fromNative(Value)
+    local OldValue = self.Value
+    self.Value = Value
+    applyNativeSpecial(self.Id, Value)
+
+    local Changed = Force or OldValue ~= Value or type(Value) == "table"
+    if not Changed then
+        return
+    end
+
+    for _, Callback in ipairs(self.Callbacks) do
+        safeCall(Callback, Value)
+    end
+end
+
+function CompatControl:OnChanged(Callback)
+    if type(Callback) == "function" then
+        table.insert(self.Callbacks, Callback)
+    end
+    return self
+end
+
+function CompatControl:SetValue(Value)
+    local NativeValue = self:_toNative(Value)
+
+    if self.Native and type(self.Native.Set) == "function" then
+        local Ok = pcall(function()
+            self.Native:Set(NativeValue, false)
+        end)
+
+        if Ok then
+            local Current = getNativeValue(self.Native)
+            if Current ~= nil then
+                self:_emit(Current, false)
+                return self
+            end
+        end
+    end
+
+    self:_emit(Value, true)
+    return self
+end
+
+function CompatControl:SetValues(Values)
+    if type(Values) ~= "table" then
+        Values = {}
+    end
+
+    self.Values = Values
+
+    if self.Native and type(self.Native.SetValues) == "function" then
+        local NativeValues = Values
+        if #NativeValues == 0 then
+            NativeValues = { "None" }
+        end
+
+        pcall(function()
+            self.Native:SetValues(NativeValues, true)
+        end)
+
+        local Current = getNativeValue(self.Native)
+        if Current ~= nil then
+            self:_emit(Current, false)
+        end
+    end
+
+    return self
+end
+
+function CompatControl:AddColorPicker(Id, Config)
+    return self.Section:_AddColorPicker(Id, Config or {})
+end
+
+function CompatControl:AddKeyPicker(Id, Config)
+    return self.Section:_AddKeyPicker(Id, Config or {}, self)
+end
+
+function registerCompatControl(Store, Id, NativeControl, DefaultValue, Meta)
+    Meta = Meta or {}
+
+    local Control = setmetatable({
+        Id = Id,
+        Kind = Meta.Kind,
+        Native = NativeControl,
+        Section = Meta.Section,
+        Multi = Meta.Multi == true,
+        SpecialType = Meta.SpecialType,
+        SyncToggleState = Meta.SyncToggleState == true,
+        Mode = Meta.Mode or "Toggle",
+        NoUI = Meta.NoUI == true,
+        LinkedToggle = Meta.LinkedToggle,
+        Value = DefaultValue,
+        Values = Meta.Values,
+        Callbacks = {},
+    }, CompatControl)
+
+    Store[Id] = Control
+    CompatControls[Id] = Control
+    applyNativeSpecial(Id, DefaultValue)
+    return Control
+end
+
+SectionCompat = {}
+SectionCompat.__index = SectionCompat
+
+function SectionCompat:AddToggle(Id, Config)
+    Config = Config or {}
+    local Wrapper
+
+    local NativeControl = self.Native:AddToggle({
+        Name = Config.Text or Id,
+        Flag = Id,
+        Default = Config.Default == true,
+        RequiredGraphics = "Low",
+        Callback = function(Value)
+            if Wrapper then
+                Wrapper:_emit(Value, false)
+            end
+        end,
+    })
+
+    Wrapper = registerCompatControl(Toggles, Id, NativeControl, Config.Default == true, {
+        Kind = "Toggle",
+        Section = self,
+    })
+
+    return Wrapper
+end
+
+function SectionCompat:AddSlider(Id, Config)
+    Config = Config or {}
+    local Wrapper
+    local DefaultValue = tonumber(Config.Default) or tonumber(Config.Min) or 0
+
+    local NativeControl = self.Native:AddSlider({
+        Name = Config.Text or Id,
+        Flag = Id,
+        Min = tonumber(Config.Min) or 0,
+        Max = tonumber(Config.Max) or 100,
+        Default = DefaultValue,
+        Decimals = tonumber(Config.Rounding) or 0,
+        RequiredGraphics = "Low",
+        Callback = function(Value)
+            if Wrapper then
+                Wrapper:_emit(Value, false)
+            end
+        end,
+    })
+
+    Wrapper = registerCompatControl(Options, Id, NativeControl, DefaultValue, {
+        Kind = "Slider",
+        Section = self,
+    })
+
+    return Wrapper
+end
+
+function getPlayerValues()
+    local PlayerService = game:GetService("Players")
+    local Values = { "None" }
+
+    for _, Player in ipairs(PlayerService:GetPlayers()) do
+        if Player ~= PlayerService.LocalPlayer then
+            table.insert(Values, Player.Name)
+        end
+    end
+
+    table.sort(Values, function(A, B)
+        if A == "None" then return true end
+        if B == "None" then return false end
+        return A:lower() < B:lower()
+    end)
+
+    return Values
+end
+
+function SectionCompat:AddDropdown(Id, Config)
+    Config = Config or {}
+    local Wrapper
+    local IsMulti = Config.Multi == true
+    local IsPlayer = Config.SpecialType == "Player"
+    local Values = IsPlayer and getPlayerValues() or (Config.Values or { "None" })
+
+    if #Values == 0 then
+        Values = { "None" }
+    end
+
+    if IsMulti then
+        local DefaultValue = Config.Default or {}
+        local NativeControl = self.Native:AddMultiDropdown({
+            Name = Config.Text or Id,
+            Flag = Id,
+            Values = Values,
+            Default = linoriaMapToArray(DefaultValue),
+            RequiredGraphics = "Low",
+            Callback = function(Value)
+                if Wrapper then
+                    Wrapper:_emit(Value, false)
+                end
+            end,
+        })
+
+        Wrapper = registerCompatControl(Options, Id, NativeControl, arrayToLinoriaMap(DefaultValue), {
+            Kind = "Dropdown",
+            Section = self,
+            Multi = true,
+            Values = Values,
+        })
+    else
+        local DefaultValue = Config.Default
+        if type(DefaultValue) == "number" then
+            DefaultValue = Values[DefaultValue]
+        end
+        if IsPlayer and DefaultValue == nil then
+            DefaultValue = "None"
+        elseif DefaultValue == nil then
+            DefaultValue = Values[1]
+        end
+
+        local NativeControl = self.Native:AddChoice({
+            Name = Config.Text or Id,
+            Flag = Id,
+            Values = Values,
+            Default = DefaultValue,
+            RequiredGraphics = "Low",
+            Callback = function(Value)
+                if Wrapper then
+                    Wrapper:_emit(Value, false)
+                end
+            end,
+        })
+
+        Wrapper = registerCompatControl(Options, Id, NativeControl,
+            IsPlayer and (DefaultValue == "None" and nil or DefaultValue) or DefaultValue, {
+                Kind = "Dropdown",
+                Section = self,
+                SpecialType = IsPlayer and "Player" or nil,
+                Values = Values,
+            })
+    end
+
+    if IsPlayer then
+        local PlayerService = game:GetService("Players")
+        local function RefreshPlayers()
+            if not Wrapper then return end
+            Wrapper:SetValues(getPlayerValues())
+        end
+        trackCompat(PlayerService.PlayerAdded:Connect(RefreshPlayers))
+        trackCompat(PlayerService.PlayerRemoving:Connect(function()
+            task.defer(RefreshPlayers)
+        end))
+    end
+
+    return Wrapper
+end
+
+function SectionCompat:AddInput(Id, Config)
+    Config = Config or {}
+    local Wrapper
+    local DefaultValue = tostring(Config.Default or "")
+
+    local NativeControl = self.Native:AddInput({
+        Name = Config.Text or Id,
+        Flag = Id,
+        Default = DefaultValue,
+        Placeholder = Config.Placeholder or "",
+        RequiredGraphics = "Low",
+        Callback = function(Value)
+            if Wrapper then
+                Wrapper:_emit(Value, false)
+            end
+        end,
+    })
+
+    Wrapper = registerCompatControl(Options, Id, NativeControl, DefaultValue, {
+        Kind = "Input",
+        Section = self,
+    })
+
+    if type(Config.Callback) == "function" then
+        Wrapper:OnChanged(Config.Callback)
+    end
+
+    return Wrapper
+end
+
+function SectionCompat:AddButton(Config)
+    Config = Config or {}
+    local LastClick = 0
+
+    self.Native:AddButton({
+        Name = Config.Text or "Button",
+        ButtonText = Config.Text or "Button",
+        RequiredGraphics = "Low",
+        Callback = function()
+            if Config.DoubleClick then
+                local Now = os.clock()
+                if Now - LastClick > 0.55 then
+                    LastClick = Now
+                    NativeLibrary:Notify({
+                        Title = "Experiment 17",
+                        Text = "Click again to confirm",
+                        Type = "Warning",
+                        Duration = 1.5,
+                    })
+                    return
+                end
+                LastClick = 0
+            end
+
+            safeCall(Config.Func)
+        end,
+    })
+
+    return self
+end
+
+function SectionCompat:_AddColorPicker(Id, Config, LabelText)
+    Config = Config or {}
+    local Wrapper
+    local DefaultValue = Config.Default or Color3.new(1, 1, 1)
+
+    local NativeControl = self.Native:AddColorPicker({
+        Name = Config.Title or LabelText or Config.Text or Id,
+        Flag = Id,
+        Default = DefaultValue,
+        RequiredGraphics = "Low",
+        Callback = function(Value)
+            if Wrapper then
+                Wrapper:_emit(Value, false)
+            end
+        end,
+    })
+
+    Wrapper = registerCompatControl(Options, Id, NativeControl, DefaultValue, {
+        Kind = "ColorPicker",
+        Section = self,
+    })
+
+    return Wrapper
+end
+
+function SectionCompat:_AddKeyPicker(Id, Config, LinkedToggle, LabelText)
+    Config = Config or {}
+    local Wrapper
+    local DefaultValue = Config.Default or "RightShift"
+    if typeof(DefaultValue) == "EnumItem" then
+        DefaultValue = DefaultValue.Name
+    end
+    DefaultValue = tostring(DefaultValue)
+
+    local NativeControl = nil
+    if not Config.NoUI then
+        NativeControl = self.Native:AddKeybind({
+            Name = Config.Text or LabelText or Id,
+            Flag = Id,
+            Default = DefaultValue,
+            RequiredGraphics = "Low",
+            Callback = function(Value)
+                if Wrapper then
+                    Wrapper:_emit(Value, false)
+                end
+            end,
+        })
+    end
+
+    Wrapper = registerCompatControl(Options, Id, NativeControl, DefaultValue, {
+        Kind = "Keybind",
+        Section = self,
+        SyncToggleState = Config.SyncToggleState == true,
+        Mode = Config.Mode or "Toggle",
+        NoUI = Config.NoUI == true,
+        LinkedToggle = LinkedToggle,
+    })
+
+    if Id == "MenuKeybind" then
+        Wrapper.Value = NativeLibrary.Settings and NativeLibrary.Settings.MenuKey or DefaultValue
+        applyNativeSpecial(Id, Wrapper.Value)
+    end
+
+    if Wrapper.SyncToggleState and LinkedToggle then
+        table.insert(CompatKeybinds, Wrapper)
+    end
+
+    return Wrapper
+end
+
+function SectionCompat:AddLabel(Text)
+    local Section = self
+    local LabelProxy = {}
+
+    function LabelProxy:AddColorPicker(Id, Config)
+        return Section:_AddColorPicker(Id, Config or {}, Text)
+    end
+
+    function LabelProxy:AddKeyPicker(Id, Config)
+        return Section:_AddKeyPicker(Id, Config or {}, nil, Text)
+    end
+
+    return LabelProxy
+end
+
+function wrapSection(NativeSection)
+    return setmetatable({ Native = NativeSection }, SectionCompat)
+end
+
+TabCompat = {}
+TabCompat.__index = TabCompat
+
+function TabCompat:AddLeftGroupbox(Name)
+    return wrapSection(self.Native:CreateSection(Name, false))
+end
+
+function TabCompat:AddRightGroupbox(Name)
+    return wrapSection(self.Native:CreateSection(Name, false))
+end
+
+function wrapTab(NativeTab)
+    return setmetatable({ Native = NativeTab }, TabCompat)
+end
+
+function Library:CreateWindow(Config)
+    Config = Config or {}
+
+    -- Invisible holder only exists because the old script still references
+    -- Window.Holder for Linoria-specific DPI/clamping code. The real menu is
+    -- NativeLibrary.Main and is fully controlled by Experiment17_GuiLib.
+    local Holder = Instance.new("Frame")
+    Holder.Name = "Experiment17_LinoriaCompatHolder"
+    Holder.AnchorPoint = Vector2.new(0.5, 0.5)
+    Holder.Position = UDim2.fromScale(0.5, 0.5)
+    Holder.Size = Config.Size or UDim2.fromOffset(650, 600)
+    Holder.BackgroundTransparency = 1
+    Holder.Visible = false
+    Holder.Parent = NativeLibrary.Root
+
+    local Window = {
+        Holder = Holder,
+        Native = NativeLibrary,
+    }
+
+    function Window:AddTab(Name)
+        local NativeTab
+        if Name == "UI" or Name == "UI Settings" or Name == "Settings" then
+            NativeTab = NativeLibrary.SettingsTab
+        else
+            NativeTab = NativeLibrary:CreateTab(Name)
+        end
+
+        return wrapTab(NativeTab)
+    end
+
+    return Window
+end
+
+function Library:Notify(Text, Time)
+    NativeLibrary:Notify({
+        Title = "Experiment 17",
+        Text = tostring(Text),
+        Type = "Info",
+        Duration = tonumber(Time) or 3,
+    })
+end
+
+function Library:Toggle()
+    if NativeLibrary.Unloaded then
+        return
+    end
+    NativeLibrary:SetMenuVisible(not NativeLibrary.MenuVisible)
+end
+
+function Library:OnUnload(Callback)
+    if type(Callback) == "function" then
+        table.insert(UnloadCallbacks, Callback)
+    end
+end
+
+function Library:Unload()
+    NativeLibrary:Unload()
+end
+
+function syncCompatControls(Force)
+    for _, Control in pairs(CompatControls) do
+        if Control.Native then
+            local Value = getNativeValue(Control.Native)
+            if Value ~= nil then
+                Control:_emit(Value, Force == true)
+            end
+        elseif Control.Id == "MenuKeybind" and NativeLibrary.Settings then
+            Control:_emit(NativeLibrary.Settings.MenuKey, Force == true)
+        end
+    end
+end
+
+-- Keep the old script's state/callback tables synchronized when the native
+-- config system loads controls silently.
+if type(NativeLibrary.LoadConfig) == "function" then
+    local NativeLoadConfig = NativeLibrary.LoadConfig
+    NativeLibrary.LoadConfig = function(Self, ...)
+        local Result = NativeLoadConfig(Self, ...)
+        task.defer(function()
+            syncCompatControls(true)
+        end)
+        return Result
+    end
+end
+
+if type(NativeLibrary.ApplyProfile) == "function" then
+    local NativeApplyProfile = NativeLibrary.ApplyProfile
+    NativeLibrary.ApplyProfile = function(Self, ...)
+        local Result = NativeApplyProfile(Self, ...)
+        task.defer(function()
+            syncCompatControls(true)
+        end)
+        return Result
+    end
+end
+
+-- Make the native library's own Unload button execute the script cleanup too.
+NativeUnload = NativeLibrary.Unload
+NativeLibrary.Unload = function(Self, ...)
+    if CompatUnloading then
+        return
+    end
+    CompatUnloading = true
+
+    for _, Callback in ipairs(UnloadCallbacks) do
+        pcall(Callback)
+    end
+
+    for Index = #CompatConnections, 1, -1 do
+        local Connection = CompatConnections[Index]
+        CompatConnections[Index] = nil
+        pcall(function()
+            Connection:Disconnect()
+        end)
+    end
+
+    return NativeUnload(Self, ...)
+end
+
+-- Linoria had a separate floating GUI button. v22 already has its own mobile
+-- button, so the legacy duplicate is suppressed while its settings are routed
+-- into NativeLibrary.Settings.MobileButton* above.
+function suppressOldFloatingButton(Object)
+    if not Object or Object.Name ~= "LinoriaFloatingButton" or not Object:IsA("GuiObject") then
+        return
+    end
+
+    Object.Visible = false
+    trackCompat(Object:GetPropertyChangedSignal("Visible"):Connect(function()
+        if Object.Parent and Object.Visible then
+            Object.Visible = false
+        end
+    end))
+end
+
+for _, Object in ipairs(NativeLibrary.Root:GetChildren()) do
+    suppressOldFloatingButton(Object)
+end
+trackCompat(NativeLibrary.Root.ChildAdded:Connect(suppressOldFloatingButton))
+
+-- Emulate Linoria SyncToggleState keybind behavior for controls such as
+-- MouseUnlockKey. MenuKeybind itself is handled natively by v22.
+UserInputService = game:GetService("UserInputService")
+
+function keyNameFromInput(Input)
+    if Input.UserInputType ~= Enum.UserInputType.Keyboard then
+        return nil
+    end
+    return Input.KeyCode ~= Enum.KeyCode.Unknown and Input.KeyCode.Name or nil
+end
+
+trackCompat(UserInputService.InputBegan:Connect(function(Input, Processed)
+    if Processed or NativeLibrary.Unloaded or NativeLibrary.BindingKey then
+        return
+    end
+    if UserInputService:GetFocusedTextBox() then
+        return
+    end
+
+    local KeyName = keyNameFromInput(Input)
+    if not KeyName then
+        return
+    end
+
+    for _, Keybind in ipairs(CompatKeybinds) do
+        if tostring(Keybind.Value) == KeyName and Keybind.LinkedToggle then
+            if Keybind.Mode == "Hold" then
+                Keybind.LinkedToggle:SetValue(true)
+            else
+                Keybind.LinkedToggle:SetValue(not Keybind.LinkedToggle.Value)
+            end
+        end
+    end
+end))
+
+trackCompat(UserInputService.InputEnded:Connect(function(Input)
+    if NativeLibrary.Unloaded then
+        return
+    end
+
+    local KeyName = keyNameFromInput(Input)
+    if not KeyName then
+        return
+    end
+
+    for _, Keybind in ipairs(CompatKeybinds) do
+        if Keybind.Mode == "Hold"
+            and tostring(Keybind.Value) == KeyName
+            and Keybind.LinkedToggle then
+            Keybind.LinkedToggle:SetValue(false)
+        end
+    end
+end))
+
+-- Native v22 already owns themes/config UI. These adapters keep the original
+-- script's ThemeManager/SaveManager calls valid without loading Linoria addons.
+function ThemeManager:SetLibrary() end
+function ThemeManager:SetFolder() end
+function ThemeManager:ApplyToTab() end
+
+function SaveManager:SetLibrary() end
+function SaveManager:IgnoreThemeSettings() end
+function SaveManager:SetIgnoreIndexes() end
+function SaveManager:SetFolder() end
+function SaveManager:BuildConfigSection() end
+function SaveManager:LoadAutoloadConfig()
+    if type(NativeLibrary.TryAutoload) == "function" then
+
+        pcall(function()
+            NativeLibrary:TryAutoload()
+        end)
+    end
+    task.defer(function()
+        syncCompatControls(true)
+    end)
+end
+
+
+
+-- Rivals custom music HUD references this small Linoria theme surface.
+Library.Font = Enum.Font.Code
+Library.FontColor = Color3.fromRGB(235, 235, 235)
+Library.AccentColor = Color3.fromRGB(0, 170, 255)
+Library.OutlineColor = Color3.fromRGB(5, 5, 5)
+Library.BackgroundColor = Color3.fromRGB(18, 18, 18)
+Library.MainColor = Color3.fromRGB(28, 28, 28)
+Library.KeybindFrame = Library.KeybindFrame or { Visible = true }
+
+function Library:AddToRegistry(Object, Map)
+    if not Object or type(Map) ~= "table" then
+        return
+    end
+    for Property, ThemeKey in pairs(Map) do
+        local Value = self[ThemeKey]
+        if Value ~= nil then
+            pcall(function()
+                Object[Property] = Value
+            end)
+        end
+    end
+end
+
+function Library:OnHighlight(Sensor, Target, EnterMap, LeaveMap)
+    Sensor = Sensor or Target
+    Target = Target or Sensor
+    if not Sensor or not Target then
+        return
+    end
+
+    local function Apply(Map)
+        for Property, ThemeKey in pairs(Map or {}) do
+            local Value = self[ThemeKey]
+            if Value ~= nil then
+                pcall(function()
+                    Target[Property] = Value
+                end)
+            end
+        end
+    end
+
+    trackCompat(Sensor.MouseEnter:Connect(function()
+        Apply(EnterMap)
+    end))
+    trackCompat(Sensor.MouseLeave:Connect(function()
+        Apply(LeaveMap)
+    end))
+end
+
+CompatWatermark = nil
+
+function Library:SetWatermark(Text)
+    if type(NativeLibrary.SetWatermark) == "function" then
+        pcall(function()
+            NativeLibrary:SetWatermark(Text)
+        end)
+        return
+    end
+
+    if not CompatWatermark or not CompatWatermark.Parent then
+        CompatWatermark = Instance.new("TextLabel")
+        CompatWatermark.Name = "Experiment17RivalsWatermark"
+        CompatWatermark.AutomaticSize = Enum.AutomaticSize.XY
+        CompatWatermark.Position = UDim2.fromOffset(8, 8)
+        CompatWatermark.BackgroundColor3 = self.BackgroundColor
+        CompatWatermark.BackgroundTransparency = 0.15
+        CompatWatermark.BorderSizePixel = 0
+        CompatWatermark.Font = self.Font
+        CompatWatermark.TextSize = 12
+        CompatWatermark.TextColor3 = self.FontColor
+        CompatWatermark.ZIndex = 100000
+        CompatWatermark.Parent = NativeLibrary.Root
+    end
+
+    CompatWatermark.Text = "  " .. tostring(Text) .. "  "
+end
+
+function Library:SetWatermarkVisibility(Visible)
+    if type(NativeLibrary.SetWatermarkVisibility) == "function" then
+        pcall(function()
+            NativeLibrary:SetWatermarkVisibility(Visible)
+        end)
+    elseif CompatWatermark then
+        CompatWatermark.Visible = Visible == true
+    end
+end
