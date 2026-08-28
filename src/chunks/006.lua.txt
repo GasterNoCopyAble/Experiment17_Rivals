@@ -1,0 +1,180 @@
+end
+
+function CR4.RestorePrompts()
+    for Prompt, Original in pairs(OriginalPrompts) do
+        if Prompt and Prompt.Parent then
+            PromptApplyGuard[Prompt] = true
+            pcall(function()
+                Prompt.MaxActivationDistance = Original.MaxActivationDistance
+                Prompt.HoldDuration = Original.HoldDuration
+                Prompt.RequiresLineOfSight = Original.RequiresLineOfSight
+                Prompt.Exclusivity = Original.Exclusivity
+                if Original.Enabled ~= nil then Prompt.Enabled = Original.Enabled end
+            end)
+            PromptApplyGuard[Prompt] = nil
+        end
+    end
+end
+
+--==================================================
+-- ESP
+--==================================================
+
+local ESPCategories = {
+    Doors = { Label = "Doors", Color = Color3.fromRGB(85, 170, 255), Enabled = false, Boxes = false, Tracers = false },
+    Chapter = { Label = "Chapter", Color = Color3.fromRGB(80, 220, 255), Enabled = false, Boxes = false, Tracers = false },
+    Gold = { Label = "Gold", Color = Color3.fromRGB(255, 210, 45), Enabled = false, Boxes = false, Tracers = false },
+    Keys = { Label = "Keys", Color = Color3.fromRGB(255, 245, 125), Enabled = false, Boxes = false, Tracers = false },
+    Lockpicks = { Label = "Lockpicks", Color = Color3.fromRGB(220, 190, 100), Enabled = false, Boxes = false, Tracers = false },
+    Wardrobes = { Label = "Wardrobes", Color = Color3.fromRGB(125, 210, 255), Enabled = false, Boxes = false, Tracers = false },
+    Chests = { Label = "Chests", Color = Color3.fromRGB(200, 125, 70), Enabled = false, Boxes = false, Tracers = false },
+    Lootables = { Label = "Lootables", Color = Color3.fromRGB(165, 115, 70), Enabled = false, Boxes = false, Tracers = false },
+    Lights = { Label = "Lights", Color = Color3.fromRGB(255, 235, 130), Enabled = false, Boxes = false, Tracers = false },
+    Crucifix = { Label = "Crucifix", Color = Color3.fromRGB(120, 190, 255), Enabled = false, Boxes = false, Tracers = false },
+    Items = { Label = "Items", Color = Color3.fromRGB(100, 255, 145), Enabled = false, Boxes = false, Tracers = false },
+    Objectives = { Label = "Objectives", Color = Color3.fromRGB(180, 95, 255), Enabled = false, Boxes = false, Tracers = false },
+    Books = { Label = "Books / Hints", Color = Color3.fromRGB(255, 135, 210), Enabled = false, Boxes = false, Tracers = false },
+    Breakers = { Label = "Breakers", Color = Color3.fromRGB(255, 145, 45), Enabled = false, Boxes = false, Tracers = false },
+    Rift = { Label = "Rift", Color = Color3.fromRGB(130, 80, 255), Enabled = false, Boxes = false, Tracers = false },
+    Levers = { Label = "Levers", Color = Color3.fromRGB(255, 120, 35), Enabled = false, Boxes = false, Tracers = false },
+    Mines = { Label = "Mines", Color = Color3.fromRGB(85, 255, 190), Enabled = false, Boxes = false, Tracers = false },
+    Backdoors = { Label = "Backdoors", Color = Color3.fromRGB(255, 75, 185), Enabled = false, Boxes = false, Tracers = false },
+    Fuses = { Label = "Fuses", Color = Color3.fromRGB(255, 235, 80), Enabled = false, Boxes = false, Tracers = false },
+    DangerDoor = { Label = "Danger Door", Color = Color3.fromRGB(255, 45, 45), Enabled = true, Boxes = false, Tracers = false },
+
+    Rush = { Label = "Rush", Color = Color3.fromRGB(255, 70, 70), Enabled = false, Boxes = false, Tracers = false },
+    Ambush = { Label = "Ambush", Color = Color3.fromRGB(80, 255, 105), Enabled = false, Boxes = false, Tracers = false },
+    Seek = { Label = "Seek", Color = Color3.fromRGB(25, 25, 25), Enabled = false, Boxes = false, Tracers = false },
+    Figure = { Label = "Figure", Color = Color3.fromRGB(255, 120, 35), Enabled = false, Boxes = false, Tracers = false },
+    Dupe = { Label = "Dupe", Color = Color3.fromRGB(210, 55, 255), Enabled = false, Boxes = false, Tracers = false },
+    Screech = { Label = "Screech", Color = Color3.fromRGB(210, 210, 255), Enabled = false, Boxes = false, Tracers = false },
+    Dread = { Label = "Dread", Color = Color3.fromRGB(115, 50, 155), Enabled = false, Boxes = false, Tracers = false },
+    Snare = { Label = "Snare", Color = Color3.fromRGB(130, 190, 65), Enabled = false, Boxes = false, Tracers = false },
+    OtherMonsters = { Label = "Other Monsters", Color = Color3.fromRGB(255, 55, 155), Enabled = false, Boxes = false, Tracers = false },
+    A60 = { Label = "A-60", Color = Color3.fromRGB(255, 35, 35), Enabled = false, Boxes = false, Tracers = false },
+    A120 = { Label = "A-120", Color = Color3.fromRGB(235, 235, 235), Enabled = false, Boxes = false, Tracers = false },
+    BackdoorRush = { Label = "Backdoor Rush", Color = Color3.fromRGB(255, 80, 160), Enabled = false, Boxes = false, Tracers = false },
+    Lookman = { Label = "Lookman", Color = Color3.fromRGB(120, 90, 255), Enabled = false, Boxes = false, Tracers = false },
+    GlitchAmbush = { Label = "Glitch Ambush", Color = Color3.fromRGB(55, 255, 220), Enabled = false, Boxes = false, Tracers = false },
+}
+
+local ObjectCategoryOrder = {
+    "Doors", "Chapter", "Gold", "Keys", "Lockpicks", "Wardrobes", "Chests", "Lootables",
+    "Lights", "Crucifix", "Items", "Objectives", "Books", "Breakers", "Rift",
+    "Levers", "Mines", "Backdoors", "Fuses", "DangerDoor",
+}
+
+local MonsterCategoryOrder = {
+    "Rush", "Ambush", "Seek", "Figure", "Dupe", "Screech", "Dread", "Snare", "OtherMonsters",
+    "A60", "A120", "BackdoorRush", "Lookman", "GlitchAmbush",
+}
+
+local MonsterCategorySet = {}
+for _, Key in ipairs(MonsterCategoryOrder) do MonsterCategorySet[Key] = true end
+
+local RefreshXRay
+local RestoreXRayForTarget
+
+local ESPOverlay = Instance.new("Frame")
+ESPOverlay.Name = "LinoriaESPOverlay"
+ESPOverlay.BackgroundTransparency = 1
+ESPOverlay.BorderSizePixel = 0
+ESPOverlay.Position = UDim2.fromScale(0, 0)
+ESPOverlay.Size = UDim2.fromScale(1, 1)
+ESPOverlay.Active = false
+ESPOverlay.ZIndex = 900
+ESPOverlay.Parent = Library.ScreenGui
+
+local HighlightFolder = Instance.new("Folder")
+HighlightFolder.Name = "LinoriaCurrentRoomsHighlights"
+HighlightFolder.Parent = workspace
+
+local ESPEntries = setmetatable({}, { __mode = "k" })
+local ProtectedESPParts = setmetatable({}, { __mode = "k" })
+local DoorTargets = setmetatable({}, { __mode = "k" })
+local MonsterProxyEntries = setmetatable({}, { __mode = "k" })
+
+function CR4.GetHighlightAdornee(Target, Category)
+    if not Target or not Target.Parent then return nil end
+    if Target:IsA("BasePart") then
+        if Target.Transparency >= 0.98 and Category ~= "Doors" and Category ~= "DangerDoor" and Category ~= "Chapter" then
+            local ParentModel = Target:FindFirstAncestorOfClass("Model")
+            if ParentModel then
+                for _, Part in ipairs(ParentModel:GetDescendants()) do
+                    if Part:IsA("BasePart") and Part.Transparency < 0.98 then return ParentModel end
+                end
+            end
+        end
+        return Target
+    end
+    if Target:IsA("Model") then
+        local AnyPart = nil
+        local HasVisible = false
+        for _, Object in ipairs(Target:GetDescendants()) do
+            if Object:IsA("BasePart") then
+                AnyPart = AnyPart or Object
+                if Object.Transparency < 0.98 and Object.Size.Magnitude > 0.05 then HasVisible = true; break end
+            end
+        end
+        if HasVisible then return Target end
+        return AnyPart
+    end
+    return Target:FindFirstChildWhichIsA("BasePart", true)
+end
+
+function CR4.IsDoorVisualPart(Part)
+    if not Part or not Part:IsA("BasePart") or Part.Transparency >= 0.95 or Part.Size.Magnitude < 0.05 then return false end
+    local N = string.lower(Part.Name)
+    if string.find(N, "hidden", 1, true) or string.find(N, "hitbox", 1, true) or string.find(N, "collision", 1, true)
+        or string.find(N, "trigger", 1, true) or string.find(N, "occlusion", 1, true) or string.find(N, "blocker", 1, true) then return false end
+    return true
+end
+
+function CR4.ConfigureDoorHighlights(Entry, Config)
+    Entry.PartHighlights = Entry.PartHighlights or setmetatable({}, { __mode = "k" })
+    local Seen = setmetatable({}, { __mode = "k" })
+    local function AddPart(Part)
+        if not CR4.IsDoorVisualPart(Part) then return end
+        Seen[Part] = true
+        local H = Entry.PartHighlights[Part]
+        if not H or not H.Parent then
+            H = Instance.new("Highlight")
+            H.Name = "LinoriaDoorPartHighlight"
+            H.Adornee = Part
+            H.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            H.Parent = HighlightFolder
+            Entry.PartHighlights[Part] = H
+        end
+        H.FillColor = Config.Color; H.OutlineColor = Config.Color; H.FillTransparency = State.ESPFillTransparency; H.OutlineTransparency = 0; H.Enabled = Config.Enabled
+    end
+    if Entry.Target:IsA("BasePart") then AddPart(Entry.Target)
+    else
+        local Count = 0
+        for _, Part in ipairs(Entry.Target:GetDescendants()) do
+            if Part:IsA("BasePart") then
+                AddPart(Part); Count += 1
+                if Count >= 24 then break end
+            end
+        end
+    end
+    for Part, H in pairs(Entry.PartHighlights) do
+        if not Part or not Part.Parent or not Seen[Part] then CR4.SafeDestroy(H); Entry.PartHighlights[Part] = nil end
+    end
+    Entry.Highlight.Enabled = false
+end
+
+function CR4.CreateMonsterProxy(Target, Category)
+    if Category ~= "Rush" and Category ~= "Ambush" then return nil end
+    local Model = Instance.new("Model")
+    Model.Name = "Experiment17_" .. Category .. "HeadProxy"
+
+    local Head = nil
+    local Character = LocalPlayer.Character
+    local SourceHead = Character and Character:FindFirstChild("Head")
+    if SourceHead and SourceHead:IsA("BasePart") then
+        local Ok, Clone = pcall(function() return SourceHead:Clone() end)
+        if Ok and Clone and Clone:IsA("BasePart") then
+            Head = Clone
+            for _, Child in ipairs(Head:GetChildren()) do
+                if not Child:IsA("SpecialMesh") then CR4.SafeDestroy(Child) end
+            end
